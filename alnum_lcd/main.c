@@ -13,8 +13,8 @@ __CONFIG(WDTDIS & OSC_8MHZ & INTIO & UNPROTECT & MCLRDIS); /* Internal 8 Mhz osc
 
 #define LCD_REG_BIT     RC0
 #define LCD_REG_CLK     RC1
-#define LCD_REG_BUSY    RC0
 #define LCD_REG_E       RC2
+#define LCD_REG_RS      RC0
 
 #define IN_BUSY         RC5
 #define IN_0_5          PORTB
@@ -49,13 +49,18 @@ __CONFIG(WDTDIS & OSC_8MHZ & INTIO & UNPROTECT & MCLRDIS); /* Internal 8 Mhz osc
         lcd_push_bit();                         \
     } while (0)
 /*  */
-#define lcd_put_bits(rs, rw, b3, b2, b1, b0) do {       \
-        lcd_put_bit(b3);                                \
-        lcd_put_bit(b2);                                \
-        lcd_put_bit(b1);                                \
-        lcd_put_bit(b0);                                \
-        lcd_put_bit(rw);                                \
-        lcd_put_bit(rs);                                \
+#define lcd_put_bits(rs, b7, b6, b5, b4, b3, b2, b1, b0) do {    \
+        lcd_put_bit(b7);                                         \
+        lcd_put_bit(b6);                                         \
+        lcd_put_bit(b5);                                         \
+        lcd_put_bit(b4);                                         \
+        lcd_put_bit(b3);                                         \
+        lcd_put_bit(b2);                                         \
+        lcd_put_bit(b1);                                         \
+        lcd_put_bit(b0);                                         \
+        LCD_REG_RS = (rs);                                       \
+        lcd_start_operation();                                   \
+        lcd_stop_operation();                                    \
     } while (0)
 /*  */
 
@@ -78,55 +83,22 @@ enum lcd_commands {
 #define lcd_function_ctrl(i_8_b, d_2_l, big)        lcd_set_instruction(LCD_FUNCTION_CTRL_CMD|((i_8_b)<<4)|((d_2_l)<<3)|((big)<<2))
 #define lcd_set_address(a)                          lcd_set_instruction(LCD_DDRAM_ADDRESS_CMD|(a))
 
-#if 1
-void lcd_wait_busy(void)
-{
-    u8 bb;
-
-    lcd_put_bits(0, 1, 0, 0, 0, 0);
-
-    TRISC = TRISC_MASK | (1<<0);
-
-    do {
-        lcd_start_operation();
-        NOP(); NOP(); NOP(); NOP();
-        bb = LCD_REG_BUSY;
-        lcd_stop_operation();
-
-        lcd_start_operation();
-        lcd_stop_operation();
-    } while (bb);
-
-    TRISC = TRISC_MASK & ~(1<<0);
-}
-#else
-#define lcd_wait_busy() mdelay(8)
-#endif
-
 void lcd_set_instruction(u8 i)
 {
-    lcd_wait_busy();
+    lcd_put_bits(0,
+            (i>>7)&0x1, (i>>6)&0x1, (i>>5)&0x1, (i>>4)&0x1,
+            (i>>3)&0x1, (i>>2)&0x1, (i>>1)&0x1, (i>>0)&0x1);
 
-    lcd_put_bits(0, 0, (i>>7)&0x1, (i>>6)&0x1, (i>>5)&0x1, (i>>4)&0x1);
-    lcd_start_operation();
-    lcd_stop_operation();
-
-    lcd_put_bits(0, 0, (i>>3)&0x1, (i>>2)&0x1, (i>>1)&0x1, (i>>0)&0x1);
-    lcd_start_operation();
-    lcd_stop_operation();
+    mdelay(4);
 }
 
 void lcd_putc(u8 c)
 {
-    lcd_wait_busy();
+    lcd_put_bits(1,
+            (c>>7)&0x1, (c>>6)&0x1, (c>>5)&0x1, (c>>4)&0x1,
+            (c>>3)&0x1, (c>>2)&0x1, (c>>1)&0x1, (c>>0)&0x1);
 
-    lcd_put_bits(1, 0, (c>>7)&0x1, (c>>6)&0x1, (c>>5)&0x1, (c>>4)&0x1);
-    lcd_start_operation();
-    lcd_stop_operation();
-
-    lcd_put_bits(1, 0, (c>>3)&0x1, (c>>2)&0x1, (c>>1)&0x1, (c>>0)&0x1);
-    lcd_start_operation();
-    lcd_stop_operation();
+    udelay(100);
 }
 
 #define lcd_puts(s) do {                        \
@@ -162,23 +134,19 @@ void lcd_putc(u8 c)
 #define get_bits()      (IN_0_5|(IN_6<<6))
 #endif
 
-#define lcd_setup() do {                        \
-        mdelay(50);                             \
-        /* set 4-bit interface */               \
-        lcd_wait_busy();                        \
-        lcd_put_bits(0, 0, 0, 0, 1, 0);         \
-        lcd_start_operation();                  \
-        lcd_stop_operation();                   \
-                                                \
-        lcd_function_ctrl(0, 0, 0);             \
-                                                \
-        lcd_display_cursor(1, 0, 0);            \
-        lcd_clear_screen();                     \
-        lcd_entry_mode(1, 0);                   \
-        lcd_shift_ctrl(0, 1);                   \
-                                                \
-        lcd_return_home();                      \
-    } while (0)                                 \
+#define lcd_setup() do {                            \
+        mdelay(50);                                 \
+                                                    \
+        lcd_function_ctrl(1, 0, 0);                 \
+        mdelay(10);                                 \
+                                                    \
+        lcd_display_cursor(1, 0, 0);                \
+        lcd_clear_screen();                         \
+        lcd_entry_mode(1, 0);                       \
+        lcd_shift_ctrl(0, 1);                       \
+                                                    \
+        lcd_return_home();                          \
+    } while (0)                                     \
 
 /*
  * packet structure:

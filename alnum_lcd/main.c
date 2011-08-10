@@ -28,8 +28,36 @@ __CONFIG(WDTDIS & OSC_8MHZ & INTIO & UNPROTECT & MCLRDIS); /* Internal 8 Mhz osc
 #error Unsupported chip type
 #endif
 
+#if 1
+/* From http://www.microchipc.com/sourcecode/#delay16x for 8Mhz clk */
+u8 __delay_us;
+#define DelayDivisor 2
+#define WaitFor1Us asm("nop")
+#define Jumpback asm("goto $ - 2")
+#define DelayUs(x) {                                      \
+        __delay_us = (u8)(x/DelayDivisor);                \
+        WaitFor1Us; }                                     \
+        asm("decfsz ___delay_us, f");                     \
+        Jumpback;
+
+void DelayMs(u8 cnt)
+{
+	u8 i;
+	do {
+		i = 4;
+		do {
+			DelayUs(250);
+			CLRWDT();
+		} while (--i);
+	} while (--cnt);
+}
+
+#define udelay DelayUs
+#define mdelay DelayMs
+#else
 #define udelay __delay_us
 #define mdelay __delay_ms
+#endif
 
 /*  */
 #define lcd_start_operation() do {              \
@@ -157,28 +185,42 @@ void lcd_putc(u8 c)
         IN_CLR_N = 1;                                                   \
     } while (0)
 
+#if 0
 #define get_opcode()    ((IN_6<<1)|IN_5)
 #define get_qualifier() (IN_0_5&0x1F)
+#else
+#define get_opcode(b)    ((b)>>5)
+#define get_qualifier(b) ((b)&0x1F)
+#endif
 #define get_bits()      (IN_0_5|(IN_6<<6))
+#define toggle_busy()   do { IN_CLR_N = 0, IN_CLR_N = 1; } while (0)
 #endif
 
-#define lcd_setup() do {                        \
+#define lcd_setup(multiline, font) do {         \
         mdelay(50);                             \
+                                                \
         /* set 4-bit interface */               \
         lcd_wait_busy();                        \
         lcd_put_bits(0, 0, 0, 0, 1, 0);         \
         lcd_start_operation();                  \
         lcd_stop_operation();                   \
                                                 \
-        lcd_function_ctrl(0, 0, 0);             \
+        lcd_function_ctrl(0, multiline, big);   \
                                                 \
         lcd_display_cursor(1, 0, 0);            \
-        lcd_clear_screen();                     \
         lcd_entry_mode(1, 0);                   \
-        lcd_shift_ctrl(0, 1);                   \
                                                 \
+        lcd_clear_screen();                     \
         lcd_return_home();                      \
     } while (0)                                 \
+
+#define get_byte(b) do {                        \
+        while (IN_BUSY == 0) NOP();             \
+                                                \
+        b = get_bits();                         \
+                                                \
+        toggle_busy();                          \
+    } while (0)
 
 /*
  * packet structure:
@@ -193,14 +235,18 @@ void lcd_putc(u8 c)
  * opcodes:
  *  00b: string to be displayed
  *   qualifier:
- *    bit[4:0] : length of payload[up to 32]
+ *    bit[4:0]: length of payload[up to 32]
+ *    payload : string to be displayed
  *  01b: lcd config[no payload]
  *   qualifier:
- *    00000b: single line
- *    00001b: multiline
- *  10b: goto command[no payload]
+ *    00000b: 1x80
+ *    00001b: 2x40
+ *    00010b: 4x20
+ *    00011b: big font
+ *  10b: goto command
  *   qualifier:
- *     bit[4:0] : offset in line
+ *    bit[4:0]: row
+ *    payload : col
  *  11b: generic commands[no payload]
  *   qualifier:
  *    00000b: show version
@@ -210,75 +256,69 @@ void lcd_putc(u8 c)
 u8 string0[16];
 u8 string1[16];
 
-u8 multiline = 0;
+/* hd44780 supports only 2 lines max by design[line 1 has range 0x0:0x3F, line 2 has range 0x40:7F]
+ * in case of 4-lines display 3rd line is continuation of line 1, 4th line is a continuation of line 2
+ * thus 4-lines display can be max of 20 chars wide
+ */
+enum lcdSize {
+    LCD_1x80,
+    LCD_2x40,
+    LCD_4x20,
+};
+
+const u8 line_offsets[] = {0x00, 0x40, 0x14, 0x54};
 
 void main(void)
 {
+    u8 size = LCD_4x20, big = 0;
+    u8 opcode, qualifier;
+    u8 b;
+
     platform_setup();
-    lcd_setup();
+    lcd_setup(size!=LCD_1x80, big);
 
     for (;;) {
-        u8 opcode, qualifier;
+        get_byte(b);
 
-        while (IN_BUSY == 0);
+        opcode = get_opcode(b);
+        qualifier = get_qualifier(b);
 
-        opcode = get_opcode();
-        qualifier = get_qualifier();
+        if (opcode == 0) {      /* string */
+            s8 len = qualifier, i;
+            for (i=0;i<len;++i) {
+                get_byte(b);
 
-        IN_CLR_N = 0, IN_CLR_N = 1;
-
-        switch (opcode) {
-            case 0: {           /* string */
-                s8 len = qualifier, i;
-
-                for (i=0;i<len;++i) {
-                    u8 c;
-
-                    while (IN_BUSY == 0);
-
-                    c = get_bits();
-
-                    IN_CLR_N = 0, IN_CLR_N = 1;
-
-                    if (i < 16)
-                        string0[i] = c;
-                    else if (i < 32)
-                        string1[i-16] = c;
-                }
-
-                for (i=0;i<len;++i) {
-                    if (i < 16)
-                        lcd_putc(string0[i]);
-                    else if (i < 32)
-                        lcd_putc(string1[i-16]);
-                }
-                break;
+                if (i < 16)
+                    string0[i] = b;
+                else if (i < 32)
+                    string1[i-16] = b;
             }
-            case 1: {           /* config */
-                switch (qualifier) {
-                    case 0: /* single line */
-                        multiline = 0;
-                        break;
-                    case 1: /* multiline */
-                        multiline = 1;
-                        break;
-                }
-                break;
+
+            for (i=0;i<len;++i) {
+                if (i < 16)
+                    lcd_putc(string0[i]);
+                else if (i < 32)
+                    lcd_putc(string1[i-16]);
             }
-            case 2: {           /* goto */
-                lcd_set_address(qualifier);
-                break;
+        } else if (opcode == 1) {
+            if (qualifier == 0 || qualifier == 1 || qualifier == 3) { /* size */
+                size = qualifier;
+                if (size != LCD_1x80)
+                    big = 0;
+                lcd_function_ctrl(1, size!=LCD_1x80, big);
+            } else if (qualifier == 2) { /* big font */
+                if (size != LCD_1x80)
+                    big = 1;
+                lcd_function_ctrl(1, size!=LCD_1x80, big);
             }
-            case 3: {           /* commands */
-                switch (qualifier) {
-                    case 0: /* show version */
-                        lcd_puts(VERSION);
-                        break;
-                    case 1: /* clear screen */
-                        lcd_clear_screen();
-                        break;
-                }
-                break;
+        } else if (opcode == 2) { /* goto */
+            get_byte(b);
+            lcd_set_address(line_offsets[qualifier] + b);
+        } else if (opcode == 3) { /* commands */
+            if (qualifier == 0) { /* show version */
+                lcd_puts(VERSION);
+            } else if (qualifier == 1) { /* clear screen */
+                lcd_clear_screen();
             }
         }
     }

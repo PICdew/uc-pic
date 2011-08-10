@@ -66,6 +66,7 @@ void DelayMs(u8 cnt)
 /*  */
 #define lcd_stop_operation() do {               \
         LCD_REG_E = 0;                          \
+        udelay(100);                            \
     } while (0)
 /*  */
 #define lcd_push_bit() do {                     \
@@ -117,7 +118,7 @@ void lcd_set_instruction(u8 i)
             (i>>7)&0x1, (i>>6)&0x1, (i>>5)&0x1, (i>>4)&0x1,
             (i>>3)&0x1, (i>>2)&0x1, (i>>1)&0x1, (i>>0)&0x1);
 
-    mdelay(4);
+    mdelay(2);
 }
 
 void lcd_putc(u8 c)
@@ -125,8 +126,6 @@ void lcd_putc(u8 c)
     lcd_put_bits(1,
             (c>>7)&0x1, (c>>6)&0x1, (c>>5)&0x1, (c>>4)&0x1,
             (c>>3)&0x1, (c>>2)&0x1, (c>>1)&0x1, (c>>0)&0x1);
-
-    udelay(100);
 }
 
 #define lcd_puts(s) do {                        \
@@ -168,20 +167,6 @@ void lcd_putc(u8 c)
 #define toggle_busy()   do { IN_CLR_N = 0, IN_CLR_N = 1; } while (0)
 #endif
 
-#define lcd_setup(multiline, big) do {              \
-        mdelay(50);                                 \
-                                                    \
-        lcd_function_ctrl(1, multiline, big);       \
-        mdelay(10);                                 \
-                                                    \
-        lcd_display_cursor(1, 0, 0);                \
-        lcd_clear_screen();                         \
-        lcd_entry_mode(1, 0);                       \
-        lcd_shift_ctrl(0, 1);                       \
-                                                    \
-        lcd_return_home();                          \
-    } while (0)                                     \
-
 #define get_byte(b) do {                        \
         while (IN_BUSY == 0) NOP();             \
                                                 \
@@ -189,6 +174,19 @@ void lcd_putc(u8 c)
                                                 \
         toggle_busy();                          \
     } while (0)
+
+#define lcd_setup(multiline, font) do {                         \
+        mdelay(50);                                             \
+                                                                \
+        lcd_function_ctrl(1, multiline, big);                   \
+        mdelay(5);                                              \
+                                                                \
+        lcd_display_cursor(1, 0, 0);                            \
+        lcd_entry_mode(1, 0);                                   \
+                                                                \
+        lcd_clear_screen();                                     \
+        lcd_return_home();                                      \
+    } while (0)                                                 \
 
 /*
  * packet structure:

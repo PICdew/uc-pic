@@ -56,32 +56,71 @@
 
 #include "HardwareProfile.h"
 
-unsigned char OUTPacket[64];	// Buffer for receiving and holding OUT packets sent from the host
-unsigned char INPacket[64];		// Buffer for sending IN packets to the host
+#pragma udata
+#pragma udata USB_VARIABLES=0x500
+unsigned char OutPacket[64];	// Buffer for receiving and holding OUT packets sent from the host
+unsigned char InPacket[64];		// Buffer for sending IN packets to the host
+#pragma udata
 
-USB_HANDLE USBGenericOutHandle;
-USB_HANDLE USBGenericInHandle;
+USB_HANDLE UsbOutHandle;
+USB_HANDLE UsbInHandle;
 
 //On PIC18 devices, addresses 0x00, 0x08, and 0x18 are used for
 //the reset, high priority interrupt, and low priority interrupt
 //vectors.
-#define REMAPPED_RESET_VECTOR_ADDRESS			0x00
-#define REMAPPED_HIGH_INTERRUPT_VECTOR_ADDRESS	0x08
-#define REMAPPED_LOW_INTERRUPT_VECTOR_ADDRESS	0x18
+
+// Remap vectors for compatibilty with Microchip USB boot loaders
+#if defined(PROGRAMMABLE_WITH_USB_HID_BOOTLOADER)
+	#define REMAPPED_RESET_VECTOR_ADDRESS			0x1000
+	#define REMAPPED_HIGH_INTERRUPT_VECTOR_ADDRESS	0x1008
+	#define REMAPPED_LOW_INTERRUPT_VECTOR_ADDRESS	0x1018
+#elif defined(PROGRAMMABLE_WITH_USB_MCHPUSB_BOOTLOADER)
+	#define REMAPPED_RESET_VECTOR_ADDRESS			0x800
+	#define REMAPPED_HIGH_INTERRUPT_VECTOR_ADDRESS	0x808
+	#define REMAPPED_LOW_INTERRUPT_VECTOR_ADDRESS	0x818
+#else
+	#define REMAPPED_RESET_VECTOR_ADDRESS			0x00
+	#define REMAPPED_HIGH_INTERRUPT_VECTOR_ADDRESS	0x08
+	#define REMAPPED_LOW_INTERRUPT_VECTOR_ADDRESS	0x18
+#endif
 
 void highPrioISR(void);
 void lowPrioISR(void);
 
+#if defined(PROGRAMMABLE_WITH_USB_HID_BOOTLOADER) || defined(PROGRAMMABLE_WITH_USB_MCHPUSB_BOOTLOADER)
+extern void _startup (void);
+#pragma code REMAPPED_RESET_VECTOR = REMAPPED_RESET_VECTOR_ADDRESS
+void _reset (void)
+{
+    _asm goto _startup _endasm
+}
+#endif
+
 #pragma code REMAPPED_HIGH_INTERRUPT_VECTOR = REMAPPED_HIGH_INTERRUPT_VECTOR_ADDRESS
-void Remapped_High_ISR (void)
+void remappedHighISR (void)
 {
     _asm goto highPrioISR _endasm
 }
 #pragma code REMAPPED_LOW_INTERRUPT_VECTOR = REMAPPED_LOW_INTERRUPT_VECTOR_ADDRESS
-void Remapped_Low_ISR (void)
+void remappedLowISR (void)
 {
     _asm goto lowPrioISR _endasm
 }
+
+#if defined(PROGRAMMABLE_WITH_USB_HID_BOOTLOADER) || defined(PROGRAMMABLE_WITH_USB_MCHPUSB_BOOTLOADER)
+#pragma code HIGH_INTERRUPT_VECTOR = 0x08
+void HighISR (void)
+{
+     _asm goto REMAPPED_HIGH_INTERRUPT_VECTOR_ADDRESS _endasm
+}
+
+#pragma code LOW_INTERRUPT_VECTOR = 0x18
+void LowISR (void)
+{
+     _asm goto REMAPPED_LOW_INTERRUPT_VECTOR_ADDRESS _endasm
+}
+#endif
+
 #pragma code
 
 //These are your actual interrupt handling routines.
@@ -95,8 +134,6 @@ void highPrioISR(void)
 #if defined(USB_INTERRUPT)
     USBDeviceTasks();
 #endif
-
-    PORTAbits.RA2 = 1;
 }	//This return will be a "retfie fast", since this is in a #pragma interrupt section
 
 #pragma interruptlow lowPrioISR
@@ -109,8 +146,20 @@ void lowPrioISR(void)
 
 }	//This return will be a "retfie", since this is in a #pragma interruptlow section
 
+static void plaInit(void)
+{
+    ADCON0 = 0x00; // A/D off
+    ADCON1 = 0x0f; // A/D pins are digital
+    CMCON  = 0x07; // comparator pins are digital
+
+    TRISAbits.TRISA0 = OUTPUT_PIN;
+    TRISAbits.TRISA1 = OUTPUT_PIN;
+    TRISAbits.TRISA2 = OUTPUT_PIN;
+    TRISAbits.TRISA3 = OUTPUT_PIN;
+}
+
 #if 0
-void rx_handler (void)
+static void uartRxHandler (void)
 {
     unsigned char c;
 
@@ -128,18 +177,8 @@ void rx_handler (void)
 #define BAUD_RATE 9600
 #define BAUD_RATE_GEN ((CLOCK_FREQ / (64 * BAUD_RATE)) - 1)
 
-void main(void)
+static void uartInit(void)
 {
-    // pla setup
-    ADCON0 = 0x00; // A/D off
-    ADCON1 = 0x0f; // A/D pins are digital
-    CMCON  = 0x07; // comparator pins are digital
-
-    TRISAbits.TRISA0 = OUTPUT_PIN;
-    TRISAbits.TRISA1 = OUTPUT_PIN;
-    TRISAbits.TRISA2 = OUTPUT_PIN;
-    TRISAbits.TRISA3 = OUTPUT_PIN;
-
     //-------------------------configure USART ---------------------------------------------------------
     // API configures USART for desired parameters:
     // - RX interrupt turned off, TX interrupt turned off
@@ -161,9 +200,10 @@ void main(void)
     /* Enable all high priority interrupts */
     INTCONbits.GIEH = 1;
 #endif
+}
 
-    putsUSART((char *)"..."); // transmit the string
-
+static void usbInit(void)
+{
     //	The USB specifications require that USB peripheral devices must never source
     //	current onto the Vbus pin.  Additionally, USB peripherals should not source
     //	current on D+ or D- when the host/hub is not actively powering the Vbus line.
@@ -201,8 +241,8 @@ void main(void)
     tris_self_power = INPUT_PIN;	// See HardwareProfile.h
 #endif
 
-	USBGenericOutHandle = 0;
-	USBGenericInHandle = 0;
+	UsbOutHandle = 0;
+	UsbInHandle = 0;
 
     USBDeviceInit();	//usb_device.c.  Initializes USB module SFRs and firmware
     					//variables to known states.
@@ -210,101 +250,117 @@ void main(void)
 #if defined(USB_INTERRUPT)
     USBDeviceAttach();
 #endif
+}
+
+static void processUsbCommands(void)
+{
+#if defined(USB_POLLING)
+    // Check bus status and service USB interrupts.
+    USBDeviceTasks(); // Interrupt or polling method.  If using polling, must call
+    // this function periodically.  This function will take care
+    // of processing and responding to SETUP transactions
+    // (such as during the enumeration process when you first
+    // plug in).  USB hosts require that USB devices should accept
+    // and process SETUP packets in a timely fashion.  Therefore,
+    // when using polling, this function should be called
+    // regularly (such as once every 1.8ms or faster** [see
+    // inline code comments in usb_device.c for explanation when
+    // "or faster" applies])  In most cases, the USBDeviceTasks()
+    // function does not take very long to execute (ex: <100
+    // instruction cycles) before it returns.
+#endif
+
+    // Note: The user application should not begin attempting to read/write over the USB
+    // until after the device has been fully enumerated.  After the device is fully
+    // enumerated, the USBDeviceState will be set to "CONFIGURED_STATE".
+    if ((USBDeviceState < CONFIGURED_STATE)||(USBSuspendControl==1))
+        return;
+
+    // As the device completes the enumeration process, the UsbCbInitEP() function will
+    // get called.  In this function, we initialize the user application endpoints (in this
+    // example code, the user application makes use of endpoint 1 IN and endpoint 1 OUT).
+    // The USBGenRead() function call in the UsbCbInitEP() function initializes endpoint 1 OUT
+    // and "arms" it so that it can receive a packet of data from the host.  Once the endpoint
+    // has been armed, the host can then send data to it (assuming some kind of application software
+    // is running on the host, and the application software tries to send data to the USB device).
+
+    // If the host sends a packet of data to the endpoint 1 OUT buffer, the hardware of the SIE will
+    // automatically receive it and store the data at the memory location pointed to when we called
+    // USBGenRead().  Additionally, the endpoint handle (in this case UsbOutHandle) will indicate
+    // that the endpoint is no longer busy.  At this point, it is safe for this firmware to begin reading
+    // from the endpoint buffer, and processing the data.  In this example, we have implemented a few very
+    // simple commands.  For example, if the host sends a packet of data to the endpoint 1 OUT buffer, with the
+    // first byte = 0x80, this is being used as a command to indicate that the firmware should "Toggle LED(s)".
+    if (!USBHandleBusy(UsbOutHandle)) {		// Check if the endpoint has received any data from the host.
+        switch (OutPacket[0]) {                     // Data arrived, check what kind of command might be in the packet of data.
+            default:
+                InPacket[0] = OutPacket[0];	// Echo back to the host the command we are fulfilling in the first byte.
+
+                // Now check to make sure no previous attempts to send data to the host are still pending.  If any attemps are still
+                // pending, we do not want to write to the endpoint 1 IN buffer again, until the previous transaction is complete.
+                // Otherwise the unsent data waiting in the buffer will get overwritten and will result in unexpected behavior.
+                if (!USBHandleBusy(UsbInHandle)) {
+                    // The endpoint was not "busy", therefore it is safe to write to the buffer and arm the endpoint.
+                    // The USBGenWrite() function call "arms" the endpoint (and makes the handle indicate the endpoint is busy).
+                    // Once armed, the data will be automatically sent to the host (in hardware by the SIE) the next time the
+                    // host polls the endpoint.  Once the data is successfully sent, the handle (in this case UsbInHandle)
+                    // will indicate the the endpoint is no longer busy.
+                    UsbInHandle = USBGenWrite(USBGEN_EP_NUM,(BYTE*)&InPacket,USBGEN_EP_SIZE);
+                }
+                break;
+        }
+    }
+
+    // Re-arm the OUT endpoint for the next packet:
+    // The USBGenRead() function call "arms" the endpoint (and makes it "busy").  If the endpoint is armed, the SIE will
+    // automatically accept data from the host, if the host tries to send a packet of data to the endpoint.  Once a data
+    // packet addressed to this endpoint is received from the host, the endpoint will no longer be busy, and the application
+    // can read the data which will be sitting in the buffer.
+    UsbOutHandle = USBGenRead(USBGEN_EP_NUM,(BYTE*)&OutPacket, USBGEN_EP_SIZE);
+}
+
+void main(void)
+{
+    plaInit();
+    uartInit();
+    usbInit();
+
+    putsUSART((char *)"..."); // transmit the string
 
     PORTAbits.RA0 = 1;
     PORTAbits.RA1 = 0;
     PORTAbits.RA2 = 0;
     PORTAbits.RA3 = 0;
+
     for (;;) {
         PORTAbits.RA1 ^= 1;
 
-#if defined(USB_POLLING)
-		// Check bus status and service USB interrupts.
-        USBDeviceTasks(); // Interrupt or polling method.  If using polling, must call
-        				  // this function periodically.  This function will take care
-        				  // of processing and responding to SETUP transactions
-        				  // (such as during the enumeration process when you first
-        				  // plug in).  USB hosts require that USB devices should accept
-        				  // and process SETUP packets in a timely fashion.  Therefore,
-        				  // when using polling, this function should be called
-        				  // regularly (such as once every 1.8ms or faster** [see
-        				  // inline code comments in usb_device.c for explanation when
-        				  // "or faster" applies])  In most cases, the USBDeviceTasks()
-        				  // function does not take very long to execute (ex: <100
-        				  // instruction cycles) before it returns.
-#endif
-
-        // Note: The user application should not begin attempting to read/write over the USB
-        // until after the device has been fully enumerated.  After the device is fully
-        // enumerated, the USBDeviceState will be set to "CONFIGURED_STATE".
-        if ((USBDeviceState < CONFIGURED_STATE)||(USBSuspendControl==1))
-            continue;
+        processUsbCommands();
 
         PORTAbits.RA3 = 1;
-        // As the device completes the enumeration process, the USBCBInitEP() function will
-        // get called.  In this function, we initialize the user application endpoints (in this
-        // example code, the user application makes use of endpoint 1 IN and endpoint 1 OUT).
-        // The USBGenRead() function call in the USBCBInitEP() function initializes endpoint 1 OUT
-        // and "arms" it so that it can receive a packet of data from the host.  Once the endpoint
-        // has been armed, the host can then send data to it (assuming some kind of application software
-        // is running on the host, and the application software tries to send data to the USB device).
-
-        // If the host sends a packet of data to the endpoint 1 OUT buffer, the hardware of the SIE will
-        // automatically receive it and store the data at the memory location pointed to when we called
-        // USBGenRead().  Additionally, the endpoint handle (in this case USBGenericOutHandle) will indicate
-        // that the endpoint is no longer busy.  At this point, it is safe for this firmware to begin reading
-        // from the endpoint buffer, and processing the data.  In this example, we have implemented a few very
-        // simple commands.  For example, if the host sends a packet of data to the endpoint 1 OUT buffer, with the
-        // first byte = 0x80, this is being used as a command to indicate that the firmware should "Toggle LED(s)".
-        if (!USBHandleBusy(USBGenericOutHandle)) {		// Check if the endpoint has received any data from the host.
-            switch (OUTPacket[0]) {                     // Data arrived, check what kind of command might be in the packet of data.
-                default:
-                    INPacket[0] = OUTPacket[0];	// Echo back to the host the command we are fulfilling in the first byte.
-
-                    // Now check to make sure no previous attempts to send data to the host are still pending.  If any attemps are still
-                    // pending, we do not want to write to the endpoint 1 IN buffer again, until the previous transaction is complete.
-                    // Otherwise the unsent data waiting in the buffer will get overwritten and will result in unexpected behavior.
-                    if (!USBHandleBusy(USBGenericInHandle)) {
-                        // The endpoint was not "busy", therefore it is safe to write to the buffer and arm the endpoint.
-                        // The USBGenWrite() function call "arms" the endpoint (and makes the handle indicate the endpoint is busy).
-                        // Once armed, the data will be automatically sent to the host (in hardware by the SIE) the next time the
-                        // host polls the endpoint.  Once the data is successfully sent, the handle (in this case USBGenericInHandle)
-                        // will indicate the the endpoint is no longer busy.
-                        USBGenericInHandle = USBGenWrite(USBGEN_EP_NUM,(BYTE*)&INPacket,USBGEN_EP_SIZE);
-                    }
-                    break;
-            }
-        }
-
-        // Re-arm the OUT endpoint for the next packet:
-	    // The USBGenRead() function call "arms" the endpoint (and makes it "busy").  If the endpoint is armed, the SIE will
-	    // automatically accept data from the host, if the host tries to send a packet of data to the endpoint.  Once a data
-	    // packet addressed to this endpoint is received from the host, the endpoint will no longer be busy, and the application
-	    // can read the data which will be sitting in the buffer.
-        USBGenericOutHandle = USBGenRead(USBGEN_EP_NUM,(BYTE*)&OUTPacket, USBGEN_EP_SIZE);
     }
 }
 
 // ******************************************************************************************************
 // ************** USB Callback Functions ****************************************************************
 // ******************************************************************************************************
-// The USB firmware stack will call the callback functions USBCBxxx() in response to certain USB related
+// The USB firmware stack will call the callback functions UsbCbxxx() in response to certain USB related
 // events.  For example, if the host PC is powering down, it will stop sending out Start of Frame (SOF)
 // packets to your device.  In response to this, all USB devices are supposed to decrease their power
 // consumption from the USB Vbus to <2.5mA each.  The USB module detects this condition (which according
-// to the USB specifications is 3+ms of no bus activity/SOF packets) and then calls the USBCBSuspend()
+// to the USB specifications is 3+ms of no bus activity/SOF packets) and then calls the UsbCbSuspend()
 // function.  You should modify these callback functions to take appropriate actions for each of these
-// conditions.  For example, in the USBCBSuspend(), you may wish to add code that will decrease power
+// conditions.  For example, in the UsbCbSuspend(), you may wish to add code that will decrease power
 // consumption from Vbus to <2.5mA (such as by clock switching, turning off LEDs, putting the
-// microcontroller to sleep, etc.).  Then, in the USBCBWakeFromSuspend() function, you may then wish to
-// add code that undoes the power saving things done in the USBCBSuspend() function.
+// microcontroller to sleep, etc.).  Then, in the UsbCbWakeFromSuspend() function, you may then wish to
+// add code that undoes the power saving things done in the UsbCbSuspend() function.
 
-// The USBCBSendResume() function is special, in that the USB stack will not automatically call this
+// The UsbCbSendResume() function is special, in that the USB stack will not automatically call this
 // function.  This function is meant to be called from the application firmware instead.  See the
 // additional comments near the function.
 
 /******************************************************************************
- * Function:        void USBCBSuspend(void)
+ * Function:        static void UsbCbSuspend(void)
  *
  * PreCondition:    None
  *
@@ -318,7 +374,7 @@ void main(void)
  *
  * Note:            None
  *****************************************************************************/
-void USBCBSuspend(void)
+static void UsbCbSuspend(void)
 {
 	//Example power saving code.  Insert appropriate code here for the desired
 	//application behavior.  If the microcontroller will be put to sleep, a
@@ -329,8 +385,8 @@ void USBCBSuspend(void)
 	//DisableAllInterruptEnableBits();
 	//EnableOnlyTheInterruptsWhichWillBeUsedToWakeTheMicro();	//should enable at least USBActivityIF as a wake source
 	//Sleep();
-	//RestoreStateOfAllPreviouslySavedInterruptEnableBits();	//Preferrably, this should be done in the USBCBWakeFromSuspend() function instead.
-	//RestoreIOPinsToNormal();									//Preferrably, this should be done in the USBCBWakeFromSuspend() function instead.
+	//RestoreStateOfAllPreviouslySavedInterruptEnableBits();	//Preferrably, this should be done in the UsbCbWakeFromSuspend() function instead.
+	//RestoreIOPinsToNormal();									//Preferrably, this should be done in the UsbCbWakeFromSuspend() function instead.
 
 	//IMPORTANT NOTE: Do not clear the USBActivityIF (ACTVIF) bit here.  This bit is
 	//cleared inside the usb_device.c file.  Clearing USBActivityIF here will cause
@@ -339,7 +395,7 @@ void USBCBSuspend(void)
 
 
 /******************************************************************************
- * Function:        void _USB1Interrupt(void)
+ * Function:        static void _USB1Interrupt(void)
  *
  * PreCondition:    None
  *
@@ -356,7 +412,7 @@ void USBCBSuspend(void)
  * Note:            None
  *****************************************************************************/
 #if 0
-void __attribute__ ((interrupt)) _USB1Interrupt(void)
+static void __attribute__ ((interrupt)) _USB1Interrupt(void)
 {
     #if !defined(self_powered)
         if(U1OTGIRbits.ACTVIF)
@@ -374,7 +430,7 @@ void __attribute__ ((interrupt)) _USB1Interrupt(void)
 #endif
 
 /******************************************************************************
- * Function:        void USBCBWakeFromSuspend(void)
+ * Function:        static void UsbCbWakeFromSuspend(void)
  *
  * PreCondition:    None
  *
@@ -394,10 +450,10 @@ void __attribute__ ((interrupt)) _USB1Interrupt(void)
  *
  * Note:            None
  *****************************************************************************/
-void USBCBWakeFromSuspend(void)
+static void UsbCbWakeFromSuspend(void)
 {
 	// If clock switching or other power savings measures were taken when
-	// executing the USBCBSuspend() function, now would be a good time to
+	// executing the UsbCbSuspend() function, now would be a good time to
 	// switch back to normal full power run mode conditions.  The host allows
 	// a few milliseconds of wakeup time, after which the device must be
 	// fully back to normal, and capable of receiving and processing USB
@@ -407,7 +463,7 @@ void USBCBWakeFromSuspend(void)
 }
 
 /********************************************************************
- * Function:        void USBCB_SOF_Handler(void)
+ * Function:        static void UsbCbSofHandler(void)
  *
  * PreCondition:    None
  *
@@ -424,14 +480,14 @@ void USBCBWakeFromSuspend(void)
  *
  * Note:            None
  *******************************************************************/
-void USBCB_SOF_Handler(void)
+static void UsbCbSofHandler(void)
 {
     // No need to clear UIRbits.SOFIF to 0 here.
     // Callback caller is already doing that.
 }
 
 /*******************************************************************
- * Function:        void USBCBErrorHandler(void)
+ * Function:        static void UsbCbErrorHandler(void)
  *
  * PreCondition:    None
  *
@@ -447,7 +503,7 @@ void USBCB_SOF_Handler(void)
  *
  * Note:            None
  *******************************************************************/
-void USBCBErrorHandler(void)
+static void UsbCbErrorHandler(void)
 {
     // No need to clear UEIR to 0 here.
     // Callback caller is already doing that.
@@ -471,7 +527,7 @@ void USBCBErrorHandler(void)
 
 
 /*******************************************************************
- * Function:        void USBCBCheckOtherReq(void)
+ * Function:        static void UsbCbCheckOtherReq(void)
  *
  * PreCondition:    None
  *
@@ -498,13 +554,13 @@ void USBCBErrorHandler(void)
  *
  * Note:            None
  *****************************************************************************/
-void USBCBCheckOtherReq(void)
+static void UsbCbCheckOtherReq(void)
 {
 }//end
 
 
 /*******************************************************************
- * Function:        void USBCBStdSetDscHandler(void)
+ * Function:        static void UsbCbStdSetDscHandler(void)
  *
  * PreCondition:    None
  *
@@ -514,7 +570,7 @@ void USBCBCheckOtherReq(void)
  *
  * Side Effects:    None
  *
- * Overview:        The USBCBStdSetDscHandler() callback function is
+ * Overview:        The UsbCbStdSetDscHandler() callback function is
  *					called when a SETUP, bRequest: SET_DESCRIPTOR request
  *					arrives.  Typically SET_DESCRIPTOR requests are
  *					not used in most applications, and it is
@@ -522,14 +578,14 @@ void USBCBCheckOtherReq(void)
  *
  * Note:            None
  *****************************************************************************/
-void USBCBStdSetDscHandler(void)
+static void UsbCbStdSetDscHandler(void)
 {
     // Must claim session ownership if supporting this request
 }//end
 
 
 /******************************************************************************
- * Function:        void USBCBInitEP(void)
+ * Function:        static void UsbCbInitEP(void)
  *
  * PreCondition:    None
  *
@@ -548,14 +604,14 @@ void USBCBStdSetDscHandler(void)
  *
  * Note:            None
  *****************************************************************************/
-void USBCBInitEP(void)
+static void UsbCbInitEP(void)
 {
     USBEnableEndpoint(USBGEN_EP_NUM, USB_OUT_ENABLED|USB_IN_ENABLED|USB_HANDSHAKE_ENABLED|USB_DISALLOW_SETUP);
-    USBGenericOutHandle = USBGenRead(USBGEN_EP_NUM, (BYTE*)&OUTPacket, USBGEN_EP_SIZE);
+    UsbOutHandle = USBGenRead(USBGEN_EP_NUM, (BYTE*)&OutPacket, USBGEN_EP_SIZE);
 }
 
 /********************************************************************
- * Function:        void USBCBSendResume(void)
+ * Function:        static void UsbCbSendResume(void)
  *
  * PreCondition:    None
  *
@@ -575,7 +631,7 @@ void USBCBInitEP(void)
  *					IR receiver can detect this signalling, and then
  *					send a USB "command" to the PC to wake up.
  *
- *					The USBCBSendResume() "callback" function is used
+ *					The UsbCbSendResume() "callback" function is used
  *					to send this special USB signalling which wakes
  *					up the PC.  This function may be called by
  *					application firmware to wake up the PC.  This
@@ -612,7 +668,7 @@ void USBCBInitEP(void)
  *
  *                  When this function executes, it may perform clock switching,
  *                  depending upon the application specific code in
- *                  USBCBWakeFromSuspend().  This is needed, since the USB
+ *                  UsbCbWakeFromSuspend().  This is needed, since the USB
  *                  bus will no longer be suspended by the time this function
  *                  returns.  Therefore, the USB module will need to be ready
  *                  to receive traffic from the host.
@@ -641,7 +697,8 @@ void USBCBInitEP(void)
  *                    Make sure to verify using the MPLAB SIM's Stopwatch
  *                    and verify the actual signal on an oscilloscope.
  *******************************************************************/
-void USBCBSendResume(void)
+#if 0
+static void UsbCbSendResume(void)
 {
     static WORD delay_count;
 
@@ -661,7 +718,7 @@ void USBCBSendResume(void)
             USBMaskInterrupts();
 
             //Clock switch to settings consistent with normal USB operation.
-            USBCBWakeFromSuspend();
+            UsbCbWakeFromSuspend();
             USBSuspendControl = 0;
             USBBusIsSuspended = FALSE;  //So we don't execute this code again,
                                         //until a new suspend condition is detected.
@@ -689,16 +746,16 @@ void USBCBSendResume(void)
         }
     }
 }
-
+#endif
 
 /*******************************************************************
  * Function:        BOOL USER_USB_CALLBACK_EVENT_HANDLER(
- *                        USB_EVENT event, void *pdata, WORD size)
+ *                        USB_EVENT event, static void *pdata, WORD size)
  *
  * PreCondition:    None
  *
  * Input:           USB_EVENT event - the type of event
- *                  void *pdata - pointer to the event data
+ *                  static void *pdata - pointer to the event data
  *                  WORD size - size of the event data
  *
  * Output:          None
@@ -712,32 +769,32 @@ void USBCBSendResume(void)
  *
  * Note:            None
  *******************************************************************/
-BOOL USER_USB_CALLBACK_EVENT_HANDLER(USB_EVENT event, void *pdata, WORD size)
+BOOL USER_USB_CALLBACK_EVENT_HANDLER(USB_EVENT event, static void *pdata, WORD size)
 {
     switch(event) {
         case EVENT_TRANSFER:
             //Add application specific callback task or callback function here if desired.
             break;
         case EVENT_SOF:
-            USBCB_SOF_Handler();
+            UsbCbSofHandler();
             break;
         case EVENT_SUSPEND:
-            USBCBSuspend();
+            UsbCbSuspend();
             break;
         case EVENT_RESUME:
-            USBCBWakeFromSuspend();
+            UsbCbWakeFromSuspend();
             break;
         case EVENT_CONFIGURED:
-            USBCBInitEP();
+            UsbCbInitEP();
             break;
         case EVENT_SET_DESCRIPTOR:
-            USBCBStdSetDscHandler();
+            UsbCbStdSetDscHandler();
             break;
         case EVENT_EP0_REQUEST:
-            USBCBCheckOtherReq();
+            UsbCbCheckOtherReq();
             break;
         case EVENT_BUS_ERROR:
-            USBCBErrorHandler();
+            UsbCbErrorHandler();
             break;
         case EVENT_TRANSFER_TERMINATED:
             //Add application specific callback task or callback function here if desired.

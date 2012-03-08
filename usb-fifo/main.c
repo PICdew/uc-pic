@@ -8,8 +8,8 @@
  * then the PLL will get it to 96 MHz, for USB it will be divided by 2 to get 48 MHz needed for USB
  */
 
-#pragma config PLLDIV   = 5         // Divide by 5 (20 MHz oscillator input) 
-#pragma config CPUDIV   = OSC1_PLL2 // [OSC1/OSC2 Src: /1][96 MHz PLL Src: /2]
+#pragma config PLLDIV   = 5         // Divide by 5 (20 MHz oscillator input)
+#pragma config CPUDIV   = OSC1_PLL2 // [OSC1/OSC2 Src: /1][96 MHz PLL Src: /2]: 48MHz
 #pragma config USBDIV   = 2         // USB clock source comes from the 96 MHz PLL divided by 2
 #pragma config FOSC     = HSPLL_HS  // HS oscillator, PLL enabled (HSPLL)
 #pragma config FCMEN    = OFF       // Fail-Safe Clock Monitor disabled
@@ -65,6 +65,8 @@ unsigned char InPacket[64];		// Buffer for sending IN packets to the host
 USB_HANDLE UsbOutHandle;
 USB_HANDLE UsbInHandle;
 
+static void uartRxHandler (void);
+
 //On PIC18 devices, addresses 0x00, 0x08, and 0x18 are used for
 //the reset, high priority interrupt, and low priority interrupt
 //vectors.
@@ -94,6 +96,7 @@ void _reset (void)
 {
     _asm goto _startup _endasm
 }
+#pragma code
 #endif
 
 #pragma code REMAPPED_HIGH_INTERRUPT_VECTOR = REMAPPED_HIGH_INTERRUPT_VECTOR_ADDRESS
@@ -101,11 +104,14 @@ void remappedHighISR (void)
 {
     _asm goto highPrioISR _endasm
 }
+#pragma code
+
 #pragma code REMAPPED_LOW_INTERRUPT_VECTOR = REMAPPED_LOW_INTERRUPT_VECTOR_ADDRESS
 void remappedLowISR (void)
 {
     _asm goto lowPrioISR _endasm
 }
+#pragma code
 
 #if defined(PROGRAMMABLE_WITH_USB_HID_BOOTLOADER) || defined(PROGRAMMABLE_WITH_USB_MCHPUSB_BOOTLOADER)
 #pragma code HIGH_INTERRUPT_VECTOR = 0x08
@@ -113,37 +119,30 @@ void HighISR (void)
 {
      _asm goto REMAPPED_HIGH_INTERRUPT_VECTOR_ADDRESS _endasm
 }
+#pragma code
 
 #pragma code LOW_INTERRUPT_VECTOR = 0x18
 void LowISR (void)
 {
      _asm goto REMAPPED_LOW_INTERRUPT_VECTOR_ADDRESS _endasm
 }
+#pragma code
 #endif
 
-#pragma code
-
-//These are your actual interrupt handling routines.
 #pragma interrupt highPrioISR
 void highPrioISR(void)
 {
-    //Check which interrupt flag caused the interrupt.
-    //Service the interrupt
-    //Clear the interrupt flag
-    //Etc.
 #if defined(USB_INTERRUPT)
-    USBDeviceTasks();
+    if (PIR2bits.USBIF)
+        USBDeviceTasks();
 #endif
 }	//This return will be a "retfie fast", since this is in a #pragma interrupt section
 
 #pragma interruptlow lowPrioISR
 void lowPrioISR(void)
 {
-    //Check which interrupt flag caused the interrupt.
-    //Service the interrupt
-    //Clear the interrupt flag
-    //Etc.
-
+    if (PIR1bits.RCIF)
+        uartRxHandler();
 }	//This return will be a "retfie", since this is in a #pragma interruptlow section
 
 static void plaInit(void)
@@ -158,7 +157,6 @@ static void plaInit(void)
     TRISAbits.TRISA3 = OUTPUT_PIN;
 }
 
-#if 0
 static void uartRxHandler (void)
 {
     unsigned char c;
@@ -166,40 +164,49 @@ static void uartRxHandler (void)
     /* Get the character received from the USART */
     c = ReadUSART();
     /* Put the character received from the USART */
-    WriteUART(c);
+    WriteUSART(c);
 
     /* Clear the interrupt flag */
     PIR1bits.RCIF = 0;
 }
-#endif
 
-// BAUD_RATE_GEN is calculated as = [Fosc / (64 * Desired Baudrate)] - 1
-#define BAUD_RATE 9600
-#define BAUD_RATE_GEN ((CLOCK_FREQ / (64 * BAUD_RATE)) - 1)
+// BAUD_RATE_GEN is calculated as = [Fosc / (16 * Desired Baudrate)] - 1
+#define BAUD_RATE 38400
+#define BAUD_RATE_GEN ((CLOCK_FREQ / (16 * BAUD_RATE)) - 1)
 
 static void uartInit(void)
 {
     //-------------------------configure USART ---------------------------------------------------------
     // API configures USART for desired parameters:
-    // - RX interrupt turned off, TX interrupt turned off
+    // - RX interrupt turned on, TX interrupt turned off
     // - Asynchronous mode
     // - 8 bits
     // - Continuous Receive Enabled
     // - High speed baud rate generator mode
+#if defined(USE_OR_MASKS)
     OpenUSART(USART_TX_INT_OFF
-            | USART_RX_INT_OFF
+            | USART_RX_INT_ON
             | USART_ASYNCH_MODE
             | USART_EIGHT_BIT
             | USART_CONT_RX
             | USART_BRGH_HIGH, BAUD_RATE_GEN);
-#if 0
+#else
+    OpenUSART(USART_TX_INT_OFF
+            & USART_RX_INT_ON
+            & USART_ASYNCH_MODE
+            & USART_EIGHT_BIT
+            & USART_CONT_RX
+            & USART_BRGH_HIGH, BAUD_RATE_GEN);
+#endif
+
     /* Enable interrupt priority */
     RCONbits.IPEN = 1;
-    /* Make receive interrupt high priority */
-    IPR1bits.RCIP = 1;
-    /* Enable all high priority interrupts */
-    INTCONbits.GIEH = 1;
-#endif
+    /* Make receive interrupt LOW priority */
+    IPR1bits.RCIP = 0;
+    /* Enable receive interrupt */
+    PIE1bits.RCIE = 1;
+    /* Enable all LOW priority interrupts */
+    INTCONbits.GIEL = 1;
 }
 
 static void usbInit(void)
@@ -325,19 +332,15 @@ void main(void)
     uartInit();
     usbInit();
 
-    putsUSART((char *)"..."); // transmit the string
+    putrsUSART("Peripherals initialized\r\n");
 
-    PORTAbits.RA0 = 1;
+    PORTAbits.RA0 = 0;
     PORTAbits.RA1 = 0;
     PORTAbits.RA2 = 0;
     PORTAbits.RA3 = 0;
 
     for (;;) {
-        PORTAbits.RA1 ^= 1;
-
         processUsbCommands();
-
-        PORTAbits.RA3 = 1;
     }
 }
 

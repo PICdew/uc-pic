@@ -3,3 +3,6 @@ dist
 *.err
 *.SDF
 *.DBK
+*.PWI
+*.i
+*.dmp

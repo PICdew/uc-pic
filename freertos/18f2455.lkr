@@ -1,12 +1,12 @@
-// $Id: 18f2455.lkr,v 1.4 2003/03/13 05:02:23 sealep Exp $
-// File: 18f2455.lkr
-// Sample linker script for the PIC18F2455 processor
+// $Id: 18f2550.lkr,v 1.4 2003/03/13 05:02:23 sealep Exp $
+// File: 18f2550.lkr
+// Sample linker script for the PIC18F2550 processor
 
 LIBPATH .
 
 FILES c018i.o
 FILES clib.lib
-FILES p18F2455.lib
+FILES p18F2550.lib
 
 CODEPAGE   NAME=vectors    START=0x0            END=0x39           PROTECTED
 CODEPAGE   NAME=page       START=0x3A           END=0x5FFF

@@ -1,5 +1,5 @@
-#if defined(__18F2455)
-#include <p18f2455.h>
+#if defined(__18F2550)
+#include <p18f2550.h>
 
 #define SIMULATION
 
@@ -145,16 +145,29 @@ void lowPrioISR(void)
         uartRxHandler();
 }	//This return will be a "retfie", since this is in a #pragma interruptlow section
 
+
+/*-----------------------------------------------------------*/
+#define DEBUG 0
+/*-----------------------------------------------------------*/
+
+
 static void plaInit(void)
 {
     ADCON0 = 0x00; // A/D off
     ADCON1 = 0x0f; // A/D pins are digital
     CMCON  = 0x07; // comparator pins are digital
 
+#if DEBUG
     TRISAbits.TRISA0 = OUTPUT_PIN;
     TRISAbits.TRISA1 = OUTPUT_PIN;
     TRISAbits.TRISA2 = OUTPUT_PIN;
     TRISAbits.TRISA3 = OUTPUT_PIN;
+
+    PORTAbits.RA0 = 0;
+    PORTAbits.RA1 = 1;
+    PORTAbits.RA2 = 0;
+    PORTAbits.RA3 = 0;
+#endif
 }
 
 static void uartRxHandler (void)
@@ -333,11 +346,6 @@ void main(void)
     usbInit();
 
     putrsUSART("Peripherals initialized\r\n");
-
-    PORTAbits.RA0 = 0;
-    PORTAbits.RA1 = 0;
-    PORTAbits.RA2 = 0;
-    PORTAbits.RA3 = 0;
 
     for (;;) {
         processUsbCommands();

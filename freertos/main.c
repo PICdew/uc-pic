@@ -92,8 +92,8 @@ Changes from V2.0.0
 	  portTickType rather than unsigned long.
 */
 
-#if defined(__18F2455)
-#include <p18f2455.h>
+#if defined(__18F2550)
+#include <p18f2550.h>
 
 /*
  * since 20 MHz crystal is used then pre-PLL is needed to divide by 5 to become 4MHz
@@ -162,6 +162,12 @@ void vSerialPutRomString( xComPortHandle pxPort, rom const char * const pcString
 
 static void vCmdTask( void *pvParameters );
 
+/** I/O pin definitions **************************************/
+#define INPUT_PIN 1
+#define OUTPUT_PIN 0
+
+/*-----------------------------------------------------------*/
+#define DEBUG 0
 /*-----------------------------------------------------------*/
 
 static void vPlaInit(void)
@@ -172,11 +178,25 @@ static void vPlaInit(void)
 
     /* Enable interrupt priority */
     RCONbits.IPEN = 1;
+
+#if DEBUG
+    TRISAbits.TRISA0 = OUTPUT_PIN;
+    TRISAbits.TRISA1 = OUTPUT_PIN;
+    TRISAbits.TRISA2 = OUTPUT_PIN;
+    TRISAbits.TRISA3 = OUTPUT_PIN;
+
+    PORTAbits.RA0 = 0;
+    PORTAbits.RA1 = 1;
+    PORTAbits.RA2 = 0;
+    PORTAbits.RA3 = 0;
+#endif
 }
 
 static portBASE_TYPE prvInfoCommand( signed char *pcWriteBuffer, size_t xWriteBufferLen, const signed char *pcCommandString )
 {
-    strncpypgm2ram( pcWriteBuffer, "Info\r\n", xWriteBufferLen );
+#if defined(__18F2550)
+    strncpypgm2ram( pcWriteBuffer, "PIC18f2550\r\n", xWriteBufferLen );
+#endif
 
     return pdFALSE;
 }

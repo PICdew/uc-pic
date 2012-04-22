@@ -20,7 +20,7 @@
 #pragma config VREGEN   = ON        // USB Voltage Regulator enabled
 #pragma config WDT      = OFF       // WDT disabled (control is placed on the SWDTEN bit)
 #pragma config WDTPS    = 32768     // Watchdog Timer Postscale: 1:32768
-#pragma config MCLRE    = ON        // MCLR pin enabled; RE3 input pin disabled
+#pragma config MCLRE    = OFF       // MCLR pin disabled; RE3 input pin enabled
 #pragma config LPT1OSC  = OFF       // Timer1 configured for higher power operation
 #pragma config PBADEN   = OFF       // PORTB<4:0> pins are configured as digital I/O on Reset
 #pragma config CCP2MX   = OFF       // CCP2 input/output is multiplexed with RB3

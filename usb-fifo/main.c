@@ -58,8 +58,8 @@
 
 #pragma udata
 #pragma udata USB_VARIABLES=0x500
-unsigned char OutPacket[64];	// Buffer for receiving and holding OUT packets sent from the host
-unsigned char InPacket[64];		// Buffer for sending IN packets to the host
+unsigned char OutPacket[USBGEN_EP_SIZE];	// Buffer for receiving and holding OUT packets sent from the host
+unsigned char InPacket[USBGEN_EP_SIZE];		// Buffer for sending IN packets to the host
 #pragma udata
 
 USB_HANDLE UsbOutHandle;

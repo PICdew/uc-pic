@@ -274,6 +274,8 @@ static void usbInit(void)
 
 static void processUsbCommands(void)
 {
+    int inCnt = 0;
+
 #if defined(USB_POLLING)
     // Check bus status and service USB interrupts.
     USBDeviceTasks(); // Interrupt or polling method.  If using polling, must call
@@ -314,20 +316,31 @@ static void processUsbCommands(void)
     if (!USBHandleBusy(UsbOutHandle)) {		// Check if the endpoint has received any data from the host.
         switch (OutPacket[0]) {                     // Data arrived, check what kind of command might be in the packet of data.
             default:
-                InPacket[0] = OutPacket[0];	// Echo back to the host the command we are fulfilling in the first byte.
-
-                // Now check to make sure no previous attempts to send data to the host are still pending.  If any attemps are still
-                // pending, we do not want to write to the endpoint 1 IN buffer again, until the previous transaction is complete.
-                // Otherwise the unsent data waiting in the buffer will get overwritten and will result in unexpected behavior.
-                if (!USBHandleBusy(UsbInHandle)) {
-                    // The endpoint was not "busy", therefore it is safe to write to the buffer and arm the endpoint.
-                    // The USBGenWrite() function call "arms" the endpoint (and makes the handle indicate the endpoint is busy).
-                    // Once armed, the data will be automatically sent to the host (in hardware by the SIE) the next time the
-                    // host polls the endpoint.  Once the data is successfully sent, the handle (in this case UsbInHandle)
-                    // will indicate the the endpoint is no longer busy.
-                    UsbInHandle = USBGenWrite(USBGEN_EP_NUM,(BYTE*)&InPacket,USBGEN_EP_SIZE);
+#if DEBUG
+                {
+                    inCnt = sprintf(InPacket, "Got: 0x%02X\r\n\0", OutPacket[0]);
+                    putsUSART(InPacket);
                 }
+#else
+                InPacket[0] = OutPacket[0];	// Echo back to the host the command we are fulfilling in the first byte.
+                inCnt = 1;
+#endif
                 break;
+        }
+    }
+
+    if (inCnt > 0) {
+        // Now check to make sure no previous attempts to send data to the host are still pending.  If any attemps are still
+        // pending, we do not want to write to the endpoint 1 IN buffer again, until the previous transaction is complete.
+        // Otherwise the unsent data waiting in the buffer will get overwritten and will result in unexpected behavior.
+        if (!USBHandleBusy(UsbInHandle)) {
+            // The endpoint was not "busy", therefore it is safe to write to the buffer and arm the endpoint.
+            // The USBGenWrite() function call "arms" the endpoint (and makes the handle indicate the endpoint is busy).
+            // Once armed, the data will be automatically sent to the host (in hardware by the SIE) the next time the
+            // host polls the endpoint.  Once the data is successfully sent, the handle (in this case UsbInHandle)
+            // will indicate the the endpoint is no longer busy.
+            UsbInHandle = USBGenWrite(USBGEN_EP_NUM, (BYTE*)&InPacket, inCnt>USBGEN_EP_SIZE?USBGEN_EP_SIZE:inCnt);
+            inCnt -= inCnt>USBGEN_EP_SIZE?USBGEN_EP_SIZE:inCnt;
         }
     }
 

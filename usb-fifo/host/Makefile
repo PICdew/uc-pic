@@ -10,7 +10,7 @@ RMf		= rm -f
 CC_COMPILER	:=
 CC_HOST		:=
 CC_WARNINGS	:= -Wall
-CC_INCLUDE	:=
+CC_INCLUDE	:= -I/usr/include/libusb-1.0
 CC_DEBUG	:=
 
 CC_LIST 	=
@@ -18,7 +18,7 @@ CC_LIST 	=
 CC_FLAGS	= $(CC_HOST) $(CC_WARNINGS) $(CC_INCLUDE) $(CC_DEBUG)
 CFLAGS		= $(CC_FLAGS) $(CC_LIST) $(CC_COMPILER)
 
-LDFLAGS	= -lusb
+LDFLAGS		= -lusb-1.0
 
 OTarget	    := $(BINNAME)
 

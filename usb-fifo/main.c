@@ -52,18 +52,23 @@
 #include <USB/usb.h>
 #include <USB/usb_device.h>
 #include <USB/usb_function_generic.h>
-/* #include <USB/usb_function_hid.h> */
 
 #include "HardwareProfile.h"
 
 #pragma udata
 #pragma udata USB_VARIABLES=0x500
-unsigned char OutPacket[USBGEN_EP_SIZE];	// Buffer for receiving and holding OUT packets sent from the host
-unsigned char InPacket[USBGEN_EP_SIZE];		// Buffer for sending IN packets to the host
+unsigned char OutCmdPacket[USBGEN_EP_SIZE];	// Buffer for receiving and holding OUT packets sent from the host
+unsigned char InCmdPacket[USBGEN_EP_SIZE];		// Buffer for sending IN packets to the host
+
+unsigned char OutDataPacket[USBGEN_EP_SIZE];	// Buffer for receiving and holding OUT packets sent from the host
+unsigned char InDataPacket[USBGEN_EP_SIZE];		// Buffer for sending IN packets to the host
 #pragma udata
 
-USB_HANDLE UsbOutHandle;
-USB_HANDLE UsbInHandle;
+USB_HANDLE UsbOutCmdHandle;
+USB_HANDLE UsbInCmdHandle;
+
+USB_HANDLE UsbOutDataHandle; // TODO: handle DATA OUT
+USB_HANDLE UsbInDataHandle;
 
 static void uartRxHandler (void);
 
@@ -147,27 +152,175 @@ void lowPrioISR(void)
 
 
 /*-----------------------------------------------------------*/
-#define DEBUG 0
+#define DEBUG 1
 /*-----------------------------------------------------------*/
 
+#define CY7C4XX_REMOTE_CPU_READY        PORTAbits.RA0
+#define CY7C4XX_REMOTE_CPU_READY_DIR    TRISAbits.TRISA0
+
+#define CY7C4XX_CURRENT_CPU_READY       PORTAbits.RA1
+#define CY7C4XX_CURRENT_CPU_READY_DIR   TRISAbits.TRISA1
+
+#define CY7C4XX_MASTER_RESET_N     PORTAbits.RA2
+#define CY7C4XX_MASTER_RESET_N_DIR TRISAbits.TRISA2
+
+#define CY7C4XX_READ_N             PORTAbits.RA3
+#define CY7C4XX_READ_N_DIR         TRISAbits.TRISA3
+
+#define CY7C4XX_EMPTY_N            PORTAbits.RA4
+#define CY7C4XX_EMPTY_N_DIR        TRISAbits.TRISA4
+
+#define CY7C4XX_PORT_B0            PORTBbits.RB0
+#define CY7C4XX_PORT_B0_DIR        TRISBbits.TRISB0
+#define CY7C4XX_PORT_B1            PORTBbits.RB1
+#define CY7C4XX_PORT_B1_DIR        TRISBbits.TRISB1
+#define CY7C4XX_PORT_B2            PORTBbits.RB2
+#define CY7C4XX_PORT_B2_DIR        TRISBbits.TRISB2
+#define CY7C4XX_PORT_B3            PORTBbits.RB3
+#define CY7C4XX_PORT_B3_DIR        TRISBbits.TRISB3
+#define CY7C4XX_PORT_B4            PORTEbits.RE3
+#define CY7C4XX_PORT_B4_DIR        TRISEbits.TRISE3
+#define CY7C4XX_PORT_B5            PORTCbits.RC0
+#define CY7C4XX_PORT_B5_DIR        TRISCbits.TRISC0
+#define CY7C4XX_PORT_B6            PORTCbits.RC1
+#define CY7C4XX_PORT_B6_DIR        TRISCbits.TRISC1
+#define CY7C4XX_PORT_B7            PORTCbits.RC2
+#define CY7C4XX_PORT_B7_DIR        TRISCbits.TRISC2
 
 static void plaInit(void)
 {
     ADCON0 = 0x00; // A/D off
     ADCON1 = 0x0f; // A/D pins are digital
     CMCON  = 0x07; // comparator pins are digital
+}
 
-#if DEBUG
-    TRISAbits.TRISA0 = OUTPUT_PIN;
-    TRISAbits.TRISA1 = OUTPUT_PIN;
-    TRISAbits.TRISA2 = OUTPUT_PIN;
-    TRISAbits.TRISA3 = OUTPUT_PIN;
+static void cy7c4xxInit(void)
+{
+    CY7C4XX_REMOTE_CPU_READY_DIR    = INPUT_PIN;
+    CY7C4XX_CURRENT_CPU_READY_DIR   = OUTPUT_PIN;
+    CY7C4XX_MASTER_RESET_N_DIR = OUTPUT_PIN;
+    CY7C4XX_READ_N_DIR         = OUTPUT_PIN;
+    CY7C4XX_EMPTY_N_DIR        = INPUT_PIN;
 
-    PORTAbits.RA0 = 0;
-    PORTAbits.RA1 = 1;
-    PORTAbits.RA2 = 0;
-    PORTAbits.RA3 = 0;
+    CY7C4XX_CURRENT_CPU_READY = 0;
+
+    /* reset cycle is about 25nS, at 48MHz it's just a bit more than one instruction */
+    CY7C4XX_MASTER_RESET_N = 0; // set FIFO's master reset
+    while (CY7C4XX_REMOTE_CPU_READY == 0); // wait for remote CPU ready
+    CY7C4XX_READ_N = 1; // setting /R to high
+    /* recover from reset cycle is about 10nS, at 48MHz it's less than one instruction */
+    _asm nop _endasm
+    CY7C4XX_MASTER_RESET_N = 1; // release FIFO's master reset
+    _asm nop _endasm
+#if 0
+    /* ensure the FIFO is empty */
+    while (CY7C4XX_EMPTY_N == 1) {
+        CY7C4XX_READ_N = 0;
+        _asm nop _endasm
+        CY7C4XX_READ_N = 1;
+    }
 #endif
+
+    CY7C4XX_PORT_B0_DIR = INPUT_PIN;
+    CY7C4XX_PORT_B1_DIR = INPUT_PIN;
+    CY7C4XX_PORT_B2_DIR = INPUT_PIN;
+    CY7C4XX_PORT_B3_DIR = INPUT_PIN;
+    /* CY7C4XX_PORT_B4_DIR = INPUT_PIN; */ // E3 always input
+    CY7C4XX_PORT_B5_DIR = INPUT_PIN;
+    CY7C4XX_PORT_B6_DIR = INPUT_PIN;
+    CY7C4XX_PORT_B7_DIR = INPUT_PIN;
+
+    CY7C4XX_CURRENT_CPU_READY = 1; // this CPU finished with FIFO initialization
+}
+
+static int cy7c4xxPull(unsigned char *c)
+{
+    struct cy7c4xx_port {
+        unsigned char b0:1;
+        unsigned char b1:1;
+        unsigned char b2:1;
+        unsigned char b3:1;
+        unsigned char b4:1;
+        unsigned char b5:1;
+        unsigned char b6:1;
+        unsigned char b7:1;
+    } *__c;
+
+    if (CY7C4XX_EMPTY_N == 0)
+        return -1;
+
+    __c = (struct cy7c4xx_port *)c;
+
+    CY7C4XX_READ_N = 0;
+    _asm nop _endasm
+    __c->b0 = CY7C4XX_PORT_B0;
+    __c->b1 = CY7C4XX_PORT_B1;
+    __c->b2 = CY7C4XX_PORT_B2;
+    __c->b3 = CY7C4XX_PORT_B3;
+    __c->b4 = CY7C4XX_PORT_B4;
+    __c->b5 = CY7C4XX_PORT_B5;
+    __c->b6 = CY7C4XX_PORT_B6;
+    __c->b7 = CY7C4XX_PORT_B7;
+    CY7C4XX_READ_N = 1;
+
+    return 0;
+}
+
+enum cy7c4xx_cmd {
+    CY7C4XX_CMD_UART,
+    CY7C4XX_CMD_USB,
+};
+
+#define CY7C4XX_MAX_CMD_LEN 0x40
+
+static void processCy7c4xxFifo(void)
+{
+    unsigned char c;
+    static unsigned char *cy7c4xx_buf_ptr = InDataPacket;
+    static int len = 0;
+    static enum cy7c4xx_cmd cmd;
+
+    if (cy7c4xxPull(&c) != 0)
+        return;
+
+    if (len) {
+        *cy7c4xx_buf_ptr = c;
+        ++cy7c4xx_buf_ptr;
+        --len;
+
+        if (len == 0) {
+            switch (cmd) {
+                case CY7C4XX_CMD_USB:
+                    while (USBHandleBusy(UsbInDataHandle));
+                    UsbInDataHandle = USBGenWrite(USBGEN_DATA_EP_NUM, (BYTE*)&InDataPacket, cy7c4xx_buf_ptr-InDataPacket);
+                    break;
+                case CY7C4XX_CMD_UART:
+                    *cy7c4xx_buf_ptr = 0x0;
+                    putsUSART((char *)InDataPacket);
+                    break;
+            }
+
+            cy7c4xx_buf_ptr = InDataPacket;
+        }
+    } else {
+        cmd = c>>7;
+        len = c&0x7F;
+#if DEBUG
+        {
+            unsigned char b[16];
+            switch (cmd) {
+                case CY7C4XX_CMD_USB:
+                    putrsUSART("FIFO CMD: USB");
+                    break;
+                case CY7C4XX_CMD_UART:
+                    putrsUSART("FIFO CMD: USART");
+                    break;
+            }
+            sprintf(b, ", len=%d\r\n", len);
+            putsUSART(b);
+        }
+#endif
+    }
 }
 
 static void uartRxHandler (void)
@@ -261,8 +414,10 @@ static void usbInit(void)
     tris_self_power = INPUT_PIN;	// See HardwareProfile.h
 #endif
 
-	UsbOutHandle = 0;
-	UsbInHandle = 0;
+	UsbOutCmdHandle = 0;
+	UsbInCmdHandle = 0;
+    UsbOutDataHandle = 0;
+	UsbInDataHandle = 0;
 
     USBDeviceInit();	//usb_device.c.  Initializes USB module SFRs and firmware
     					//variables to known states.
@@ -308,21 +463,21 @@ static void processUsbCommands(void)
 
     // If the host sends a packet of data to the endpoint 1 OUT buffer, the hardware of the SIE will
     // automatically receive it and store the data at the memory location pointed to when we called
-    // USBGenRead().  Additionally, the endpoint handle (in this case UsbOutHandle) will indicate
+    // USBGenRead().  Additionally, the endpoint handle (in this case UsbOutCmdHandle) will indicate
     // that the endpoint is no longer busy.  At this point, it is safe for this firmware to begin reading
     // from the endpoint buffer, and processing the data.  In this example, we have implemented a few very
     // simple commands.  For example, if the host sends a packet of data to the endpoint 1 OUT buffer, with the
     // first byte = 0x80, this is being used as a command to indicate that the firmware should "Toggle LED(s)".
-    if (!USBHandleBusy(UsbOutHandle)) {		// Check if the endpoint has received any data from the host.
-        switch (OutPacket[0]) {                     // Data arrived, check what kind of command might be in the packet of data.
+    if (!USBHandleBusy(UsbOutCmdHandle)) {		// Check if the endpoint has received any data from the host.
+        switch (OutCmdPacket[0]) {                     // Data arrived, check what kind of command might be in the packet of data.
             default:
 #if DEBUG
                 {
-                    inCnt = sprintf(InPacket, "Got: 0x%02X\r\n\0", OutPacket[0]);
-                    putsUSART(InPacket);
+                    inCnt = sprintf(InCmdPacket, "Got: 0x%02X\r\n\0", OutCmdPacket[0]);
+                    putsUSART(InCmdPacket);
                 }
 #else
-                InPacket[0] = OutPacket[0];	// Echo back to the host the command we are fulfilling in the first byte.
+                InCmdPacket[0] = OutCmdPacket[0];	// Echo back to the host the command we are fulfilling in the first byte.
                 inCnt = 1;
 #endif
                 break;
@@ -333,13 +488,13 @@ static void processUsbCommands(void)
         // Now check to make sure no previous attempts to send data to the host are still pending.  If any attemps are still
         // pending, we do not want to write to the endpoint 1 IN buffer again, until the previous transaction is complete.
         // Otherwise the unsent data waiting in the buffer will get overwritten and will result in unexpected behavior.
-        if (!USBHandleBusy(UsbInHandle)) {
+        if (!USBHandleBusy(UsbInCmdHandle)) {
             // The endpoint was not "busy", therefore it is safe to write to the buffer and arm the endpoint.
             // The USBGenWrite() function call "arms" the endpoint (and makes the handle indicate the endpoint is busy).
             // Once armed, the data will be automatically sent to the host (in hardware by the SIE) the next time the
-            // host polls the endpoint.  Once the data is successfully sent, the handle (in this case UsbInHandle)
+            // host polls the endpoint.  Once the data is successfully sent, the handle (in this case UsbInCmdHandle)
             // will indicate the the endpoint is no longer busy.
-            UsbInHandle = USBGenWrite(USBGEN_EP_NUM, (BYTE*)&InPacket, inCnt>USBGEN_EP_SIZE?USBGEN_EP_SIZE:inCnt);
+            UsbInCmdHandle = USBGenWrite(USBGEN_CMD_EP_NUM, (BYTE*)&InCmdPacket, inCnt>USBGEN_EP_SIZE?USBGEN_EP_SIZE:inCnt);
             inCnt -= inCnt>USBGEN_EP_SIZE?USBGEN_EP_SIZE:inCnt;
         }
     }
@@ -349,18 +504,22 @@ static void processUsbCommands(void)
     // automatically accept data from the host, if the host tries to send a packet of data to the endpoint.  Once a data
     // packet addressed to this endpoint is received from the host, the endpoint will no longer be busy, and the application
     // can read the data which will be sitting in the buffer.
-    UsbOutHandle = USBGenRead(USBGEN_EP_NUM,(BYTE*)&OutPacket, USBGEN_EP_SIZE);
+    UsbOutCmdHandle = USBGenRead(USBGEN_CMD_EP_NUM,(BYTE*)&OutCmdPacket, USBGEN_EP_SIZE);
 }
 
 void main(void)
 {
     plaInit();
+    cy7c4xxInit();
     uartInit();
     usbInit();
 
+#if DEBUG
     putrsUSART("Peripherals initialized\r\n");
+#endif
 
     for (;;) {
+        processCy7c4xxFifo();
         processUsbCommands();
     }
 }
@@ -630,8 +789,11 @@ static void UsbCbStdSetDscHandler(void)
  *****************************************************************************/
 static void UsbCbInitEP(void)
 {
-    USBEnableEndpoint(USBGEN_EP_NUM, USB_OUT_ENABLED|USB_IN_ENABLED|USB_HANDSHAKE_ENABLED|USB_DISALLOW_SETUP);
-    UsbOutHandle = USBGenRead(USBGEN_EP_NUM, (BYTE*)&OutPacket, USBGEN_EP_SIZE);
+    USBEnableEndpoint(USBGEN_CMD_EP_NUM, USB_OUT_ENABLED|USB_IN_ENABLED|USB_HANDSHAKE_ENABLED|USB_DISALLOW_SETUP);
+    USBEnableEndpoint(USBGEN_DATA_EP_NUM, USB_OUT_ENABLED|USB_IN_ENABLED|USB_HANDSHAKE_ENABLED|USB_DISALLOW_SETUP);
+
+    UsbOutCmdHandle = USBGenRead(USBGEN_CMD_EP_NUM, (BYTE*)&OutCmdPacket, USBGEN_EP_SIZE);
+    UsbOutDataHandle = USBGenRead(USBGEN_DATA_EP_NUM, (BYTE*)&OutDataPacket, USBGEN_EP_SIZE);
 }
 
 /********************************************************************

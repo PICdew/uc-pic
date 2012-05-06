@@ -20,7 +20,7 @@
 #pragma config VREGEN   = ON        // USB Voltage Regulator enabled
 #pragma config WDT      = OFF       // WDT disabled (control is placed on the SWDTEN bit)
 #pragma config WDTPS    = 32768     // Watchdog Timer Postscale: 1:32768
-#pragma config MCLRE    = OFF       // MCLR pin disabled; RE3 input pin enabled
+#pragma config MCLRE    = ON        // MCLR pin enabled; RE3 input pin disabled
 #pragma config LPT1OSC  = OFF       // Timer1 configured for higher power operation
 #pragma config PBADEN   = OFF       // PORTB<4:0> pins are configured as digital I/O on Reset
 #pragma config CCP2MX   = OFF       // CCP2 input/output is multiplexed with RB3
@@ -178,8 +178,8 @@ void lowPrioISR(void)
 #define CY7C4XX_PORT_B2_DIR        TRISBbits.TRISB2
 #define CY7C4XX_PORT_B3            PORTBbits.RB3
 #define CY7C4XX_PORT_B3_DIR        TRISBbits.TRISB3
-#define CY7C4XX_PORT_B4            PORTEbits.RE3
-#define CY7C4XX_PORT_B4_DIR        TRISEbits.TRISE3
+#define CY7C4XX_PORT_B4            PORTAbits.RA5
+#define CY7C4XX_PORT_B4_DIR        TRISAbits.TRISA5
 #define CY7C4XX_PORT_B5            PORTCbits.RC0
 #define CY7C4XX_PORT_B5_DIR        TRISCbits.TRISC0
 #define CY7C4XX_PORT_B6            PORTCbits.RC1
@@ -225,7 +225,7 @@ static void cy7c4xxInit(void)
     CY7C4XX_PORT_B1_DIR = INPUT_PIN;
     CY7C4XX_PORT_B2_DIR = INPUT_PIN;
     CY7C4XX_PORT_B3_DIR = INPUT_PIN;
-    /* CY7C4XX_PORT_B4_DIR = INPUT_PIN; */ // E3 always input
+    CY7C4XX_PORT_B4_DIR = INPUT_PIN;
     CY7C4XX_PORT_B5_DIR = INPUT_PIN;
     CY7C4XX_PORT_B6_DIR = INPUT_PIN;
     CY7C4XX_PORT_B7_DIR = INPUT_PIN;

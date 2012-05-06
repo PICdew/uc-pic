@@ -168,7 +168,7 @@ ROM USB_DEVICE_DESCRIPTOR device_dsc=
     USB_DESCRIPTOR_DEVICE,  // DEVICE descriptor type
     0x0200,                 // USB Spec Release Number in BCD format
     0x00,                   // Class Code
-    0x00,                   // Subclass code
+    0xff,                   // Subclass code
     0x00,                   // Protocol code
     USB_EP0_BUFF_SIZE,      // Max packet size for EP0, see usb_config.h
     0x04D8,                 // Vendor ID: 0x04D8 is Microchip's Vendor ID

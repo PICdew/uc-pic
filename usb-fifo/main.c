@@ -188,14 +188,8 @@ static void plaInit(void)
 
 /*-----------------------------------------------------------*/
 
-#define CY7C4XX_REMOTE_CPU_READY        PORTAbits.RA0
-#define CY7C4XX_REMOTE_CPU_READY_DIR    TRISAbits.TRISA0
-
-#define CY7C4XX_CURRENT_CPU_READY       PORTAbits.RA1
-#define CY7C4XX_CURRENT_CPU_READY_DIR   TRISAbits.TRISA1
-
-#define CY7C4XX_MASTER_RESET_N     PORTAbits.RA2
-#define CY7C4XX_MASTER_RESET_N_DIR TRISAbits.TRISA2
+#define CY7C4XX_FIFO_READY         PORTAbits.RA0
+#define CY7C4XX_FIFO_READY_DIR     TRISAbits.TRISA0
 
 #define CY7C4XX_READ_N             PORTAbits.RA3
 #define CY7C4XX_READ_N_DIR         TRISAbits.TRISA3
@@ -222,30 +216,12 @@ static void plaInit(void)
 
 static void cy7c4xxInit(void)
 {
-    CY7C4XX_REMOTE_CPU_READY_DIR    = INPUT_PIN;
-    CY7C4XX_CURRENT_CPU_READY_DIR   = OUTPUT_PIN;
-    CY7C4XX_MASTER_RESET_N_DIR = OUTPUT_PIN;
-    CY7C4XX_READ_N_DIR         = OUTPUT_PIN;
-    CY7C4XX_EMPTY_N_DIR        = INPUT_PIN;
+    CY7C4XX_FIFO_READY_DIR    = INPUT_PIN;
+    CY7C4XX_READ_N_DIR        = OUTPUT_PIN;
+    CY7C4XX_EMPTY_N_DIR       = INPUT_PIN;
 
-    CY7C4XX_CURRENT_CPU_READY = 0;
-
-    /* reset cycle is about 25nS, at 48MHz it's just a bit more than one instruction */
-    CY7C4XX_MASTER_RESET_N = 0; // set FIFO's master reset
-    while (CY7C4XX_REMOTE_CPU_READY == 0); // wait for remote CPU ready
-    CY7C4XX_READ_N = 1; // setting /R to high
-    /* recover from reset cycle is about 10nS, at 48MHz it's less than one instruction */
-    _asm nop _endasm
-    CY7C4XX_MASTER_RESET_N = 1; // release FIFO's master reset
-    _asm nop _endasm
-#if 0
-    /* ensure the FIFO is empty */
-    while (CY7C4XX_EMPTY_N == 1) {
-        CY7C4XX_READ_N = 0;
-        _asm nop _endasm
-        CY7C4XX_READ_N = 1;
-    }
-#endif
+    CY7C4XX_READ_N = 1;
+    while (CY7C4XX_FIFO_READY == 0);
 
     CY7C4XX_PORT_B0_DIR = INPUT_PIN;
     CY7C4XX_PORT_B1_DIR = INPUT_PIN;
@@ -255,8 +231,6 @@ static void cy7c4xxInit(void)
     CY7C4XX_PORT_B5_DIR = INPUT_PIN;
     CY7C4XX_PORT_B6_DIR = INPUT_PIN;
     CY7C4XX_PORT_B7_DIR = INPUT_PIN;
-
-    CY7C4XX_CURRENT_CPU_READY = 1; // this CPU finished with FIFO initialization
 }
 
 static int cy7c4xxPull(unsigned char *c)
@@ -320,8 +294,10 @@ static void processCy7c4xxFifo(void)
                 putsUSART(b);
             }
 
+            /* FIXME: use real ping-pong */
             while (USBHandleBusy(UsbInDataHandle));
             UsbInDataHandle = USBGenWrite(USBGEN_DATA_EP_NUM, (BYTE*)&InDataPacket, cy7c4xx_buf_ptr-InDataPacket);
+            while (USBHandleBusy(UsbInDataHandle));
 
             cy7c4xx_buf_ptr = InDataPacket;
         }
@@ -477,9 +453,10 @@ static void processUsbCommands(void)
     // first byte = 0x80, this is being used as a command to indicate that the firmware should "Toggle LED(s)".
     if (!USBHandleBusy(UsbOutCmdHandle)) { // Check if the endpoint has received any data from the host.
         unsigned char l = USBHandleGetLength(UsbOutCmdHandle);
+
         if (usbfifo_debug_operation.dump_usb_out == 1) {
             unsigned char b[16];
-            unsigned char l = USBHandleGetLength(UsbOutCmdHandle), i;
+            unsigned char i;
             putrsUSART("USB OUT: '");
             for (i=0;i<l;++i) {
                 while (BusyUSART());

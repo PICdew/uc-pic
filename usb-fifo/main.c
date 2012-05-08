@@ -56,7 +56,7 @@
 
 #include "HardwareProfile.h"
 /*-----------------------------------------------------------*/
-#define DEBUG 0
+#define DEBUG 1
 /*-----------------------------------------------------------*/
 
 #pragma udata
@@ -76,6 +76,7 @@ USB_HANDLE UsbInDataHandle;
 
 /*-----------------------------------------------------------*/
 
+#if DEBUG
 struct usbfifo_debug_operation {
     unsigned char dump_usb_out  :1;
     unsigned char dump_fifo_out :1;
@@ -95,6 +96,7 @@ enum usbfifo_cmds {
 };
 
 static struct usbfifo_debug_operation usbfifo_debug_operation = {0, };
+#endif
 
 /*-----------------------------------------------------------*/
 
@@ -371,6 +373,7 @@ static void processCy7c4xxFifo(void)
         --len;
 
         if (len == 0) {
+#if DEBUG
             if (usbfifo_debug_operation.dump_fifo_out == 1) {
                 unsigned char l = cy7c4xx_buf_ptr-InDataPacket, i;
                 unsigned char b[12];
@@ -393,6 +396,7 @@ static void processCy7c4xxFifo(void)
                 for (i=0;i<l;++i)
                     fifo9403aPush(InDataPacket[i], 1);
             }
+#endif
 
             /* FIXME: use real ping-pong */
             while (USBHandleBusy(UsbInDataHandle)); // should not loop, anyway ...
@@ -553,6 +557,7 @@ static void processUsbCommands(void)
     // simple commands.  For example, if the host sends a packet of data to the endpoint 1 OUT buffer, with the
     // first byte = 0x80, this is being used as a command to indicate that the firmware should "Toggle LED(s)".
     if (!USBHandleBusy(UsbOutCmdHandle)) { // Check if the endpoint has received any data from the host.
+#if DEBUG
         unsigned char l = USBHandleGetLength(UsbOutCmdHandle);
 
         if (usbfifo_debug_operation.dump_usb_out == 1) {
@@ -588,8 +593,10 @@ static void processUsbCommands(void)
             // will indicate the the endpoint is no longer busy.
             UsbInCmdHandle = USBGenWrite(USBGEN_CMD_EP_NUM, (BYTE*)&InCmdPacket, l);
         }
+#endif
 
         switch (OutCmdPacket[0]) {
+#if DEBUG
             case USBFIFO_CMD_DUMP_USB_OUT:
                 usbfifo_debug_operation.dump_usb_out ^= 1;
                 break;
@@ -602,6 +609,7 @@ static void processUsbCommands(void)
             case USBFIFO_CMD_USB_LOOPBACK:
                 usbfifo_debug_operation.usb_loopback ^= 1;
                 break;
+#endif
             default:
                 {
                     unsigned char b[8];
@@ -627,6 +635,7 @@ static void processUsbCommands(void)
         unsigned char l = USBHandleGetLength(UsbOutDataHandle);
         unsigned char i;
 
+#if DEBUG
         if (usbfifo_debug_operation.dump_usb_out == 1) {
             unsigned char b[16];
             putrsUSART("USB OUT: '");
@@ -652,6 +661,7 @@ static void processUsbCommands(void)
             while (USBHandleBusy(UsbInDataHandle)); // have to wait here as full ping-pong is not implemented
                                                     // and thus we don't want data from FIFO override the data being sent here
         }
+#endif
 
         fifo9403aPush(l, 1);
         for (i=0;i<l;++i)

@@ -71,7 +71,7 @@ unsigned char InDataPacket[USBGEN_EP_SIZE];		// Buffer for sending IN packets to
 USB_HANDLE UsbOutCmdHandle;
 USB_HANDLE UsbInCmdHandle;
 
-USB_HANDLE UsbOutDataHandle; // TODO: handle DATA OUT
+USB_HANDLE UsbOutDataHandle;
 USB_HANDLE UsbInDataHandle;
 
 /*-----------------------------------------------------------*/
@@ -188,64 +188,139 @@ static void plaInit(void)
 }
 
 /*-----------------------------------------------------------*/
+#define FIFOS_READY                PORTAbits.RA0
+#define FIFOS_READY_DIR            TRISAbits.TRISA0
+/*-----------------------------------------------------------*/
+#define FIFO_CY7C4XX_READ_N        PORTAbits.RA3
+#define FIFO_CY7C4XX_READ_N_DIR    TRISAbits.TRISA3
 
-#define CY7C4XX_FIFO_READY         PORTAbits.RA0
-#define CY7C4XX_FIFO_READY_DIR     TRISAbits.TRISA0
+#define FIFO_CY7C4XX_EMPTY_N       PORTAbits.RA4
+#define FIFO_CY7C4XX_EMPTY_N_DIR   TRISAbits.TRISA4
 
-#define CY7C4XX_READ_N             PORTAbits.RA3
-#define CY7C4XX_READ_N_DIR         TRISAbits.TRISA3
+#define FIFO_CY7C4XX_PORT_B0       PORTBbits.RB0
+#define FIFO_CY7C4XX_PORT_B0_DIR   TRISBbits.TRISB0
+#define FIFO_CY7C4XX_PORT_B1       PORTBbits.RB1
+#define FIFO_CY7C4XX_PORT_B1_DIR   TRISBbits.TRISB1
+#define FIFO_CY7C4XX_PORT_B2       PORTBbits.RB2
+#define FIFO_CY7C4XX_PORT_B2_DIR   TRISBbits.TRISB2
+#define FIFO_CY7C4XX_PORT_B3       PORTBbits.RB3
+#define FIFO_CY7C4XX_PORT_B3_DIR   TRISBbits.TRISB3
+#define FIFO_CY7C4XX_PORT_B4       PORTBbits.RB4
+#define FIFO_CY7C4XX_PORT_B4_DIR   TRISBbits.TRISB4
+#define FIFO_CY7C4XX_PORT_B5       PORTBbits.RB5
+#define FIFO_CY7C4XX_PORT_B5_DIR   TRISBbits.TRISB5
+#define FIFO_CY7C4XX_PORT_B6       PORTBbits.RB6
+#define FIFO_CY7C4XX_PORT_B6_DIR   TRISBbits.TRISB6
+#define FIFO_CY7C4XX_PORT_B7       PORTBbits.RB7
+#define FIFO_CY7C4XX_PORT_B7_DIR   TRISBbits.TRISB7
 
-#define CY7C4XX_EMPTY_N            PORTAbits.RA4
-#define CY7C4XX_EMPTY_N_DIR        TRISAbits.TRISA4
+#define FIFO_CY7C4XX_PORT          PORTB
+/*-----------------------------------------------------------*/
+#define FIFO_9403A_MAX_MSG_LEN     0xFF
 
-#define CY7C4XX_PORT_B0            PORTBbits.RB0
-#define CY7C4XX_PORT_B0_DIR        TRISBbits.TRISB0
-#define CY7C4XX_PORT_B1            PORTBbits.RB1
-#define CY7C4XX_PORT_B1_DIR        TRISBbits.TRISB1
-#define CY7C4XX_PORT_B2            PORTBbits.RB2
-#define CY7C4XX_PORT_B2_DIR        TRISBbits.TRISB2
-#define CY7C4XX_PORT_B3            PORTBbits.RB3
-#define CY7C4XX_PORT_B3_DIR        TRISBbits.TRISB3
-#define CY7C4XX_PORT_B4            PORTBbits.RB4
-#define CY7C4XX_PORT_B4_DIR        TRISBbits.TRISB4
-#define CY7C4XX_PORT_B5            PORTBbits.RB5
-#define CY7C4XX_PORT_B5_DIR        TRISBbits.TRISB5
-#define CY7C4XX_PORT_B6            PORTBbits.RB6
-#define CY7C4XX_PORT_B6_DIR        TRISBbits.TRISB6
-#define CY7C4XX_PORT_B7            PORTBbits.RB7
-#define CY7C4XX_PORT_B7_DIR        TRISBbits.TRISB7
+#define FIFO_9403A_PL              PORTAbits.RA1
+#define FIFO_9403A_PL_DIR          TRISAbits.TRISA1
 
-#define CY7C4XX_PORT               PORTB
+#define FIFO_9403A_IRF_N           PORTAbits.RA2
+#define FIFO_9403A_IRF_N_DIR       TRISAbits.TRISA2
 
-static void cy7c4xxInit(void)
+#define FIFO_9403A_PORT_B0         PORTAbits.RA5
+#define FIFO_9403A_PORT_B0_DIR     TRISAbits.TRISA5
+#define FIFO_9403A_PORT_B1         PORTCbits.RC0
+#define FIFO_9403A_PORT_B1_DIR     TRISCbits.TRISC0
+#define FIFO_9403A_PORT_B2         PORTCbits.RC1
+#define FIFO_9403A_PORT_B2_DIR     TRISCbits.TRISC1
+#define FIFO_9403A_PORT_B3         PORTCbits.RC2
+#define FIFO_9403A_PORT_B3_DIR     TRISCbits.TRISC2
+/*-----------------------------------------------------------*/
+
+static void fifosInit(void)
 {
-    CY7C4XX_FIFO_READY_DIR    = INPUT_PIN;
-    CY7C4XX_READ_N_DIR        = OUTPUT_PIN;
-    CY7C4XX_EMPTY_N_DIR       = INPUT_PIN;
+    FIFOS_READY_DIR           = INPUT_PIN;
 
-    CY7C4XX_READ_N = 1;
-    while (CY7C4XX_FIFO_READY == 0);
+    FIFO_9403A_PL_DIR         = OUTPUT_PIN;
+    FIFO_9403A_IRF_N_DIR      = INPUT_PIN;
 
-    CY7C4XX_PORT_B0_DIR = INPUT_PIN;
-    CY7C4XX_PORT_B1_DIR = INPUT_PIN;
-    CY7C4XX_PORT_B2_DIR = INPUT_PIN;
-    CY7C4XX_PORT_B3_DIR = INPUT_PIN;
-    CY7C4XX_PORT_B4_DIR = INPUT_PIN;
-    CY7C4XX_PORT_B5_DIR = INPUT_PIN;
-    CY7C4XX_PORT_B6_DIR = INPUT_PIN;
-    CY7C4XX_PORT_B7_DIR = INPUT_PIN;
+    FIFO_CY7C4XX_READ_N_DIR        = OUTPUT_PIN;
+    FIFO_CY7C4XX_EMPTY_N_DIR       = INPUT_PIN;
+
+    FIFO_9403A_PL = 0;
+    FIFO_CY7C4XX_READ_N = 1;
+
+    while (FIFOS_READY == 0);
+
+    FIFO_9403A_PORT_B0_DIR = OUTPUT_PIN;
+    FIFO_9403A_PORT_B1_DIR = OUTPUT_PIN;
+    FIFO_9403A_PORT_B2_DIR = OUTPUT_PIN;
+    FIFO_9403A_PORT_B3_DIR = OUTPUT_PIN;
+
+    FIFO_CY7C4XX_PORT_B0_DIR = INPUT_PIN;
+    FIFO_CY7C4XX_PORT_B1_DIR = INPUT_PIN;
+    FIFO_CY7C4XX_PORT_B2_DIR = INPUT_PIN;
+    FIFO_CY7C4XX_PORT_B3_DIR = INPUT_PIN;
+    FIFO_CY7C4XX_PORT_B4_DIR = INPUT_PIN;
+    FIFO_CY7C4XX_PORT_B5_DIR = INPUT_PIN;
+    FIFO_CY7C4XX_PORT_B6_DIR = INPUT_PIN;
+    FIFO_CY7C4XX_PORT_B7_DIR = INPUT_PIN;
 }
+
+/*-----------------------------------------------------------*/
+
+static int fifo9403aPush(unsigned char c, int block)
+{
+    struct c_bits {
+        unsigned char b0:1;
+        unsigned char b1:1;
+        unsigned char b2:1;
+        unsigned char b3:1;
+        unsigned char b4:1;
+        unsigned char b5:1;
+        unsigned char b6:1;
+        unsigned char b7:1;
+    } *__c;
+
+    if (block)
+        while (FIFO_9403A_IRF_N == 0);
+    else if (FIFO_9403A_IRF_N == 0)
+        return -1;
+
+    __c = (struct c_bits *)&c;
+
+    FIFO_9403A_PORT_B0 = __c->b0;
+    FIFO_9403A_PORT_B1 = __c->b1;
+    FIFO_9403A_PORT_B2 = __c->b2;
+    FIFO_9403A_PORT_B3 = __c->b3;
+
+    FIFO_9403A_PL = 1;
+    _asm nop _endasm
+    FIFO_9403A_PL = 0;
+
+    while (FIFO_9403A_IRF_N == 0);
+
+    FIFO_9403A_PORT_B0 = __c->b4;
+    FIFO_9403A_PORT_B1 = __c->b5;
+    FIFO_9403A_PORT_B2 = __c->b6;
+    FIFO_9403A_PORT_B3 = __c->b7;
+
+    FIFO_9403A_PL = 1;
+    _asm nop _endasm
+    FIFO_9403A_PL = 0;
+
+    return 0;
+}
+
+/*-----------------------------------------------------------*/
 
 static int cy7c4xxPull(unsigned char *c)
 {
-#if defined(CY7C4XX_PORT)
-    if (CY7C4XX_EMPTY_N == 0)
+#if defined(FIFO_CY7C4XX_PORT)
+    if (FIFO_CY7C4XX_EMPTY_N == 0)
         return -1;
 
-    CY7C4XX_READ_N = 0;
+    FIFO_CY7C4XX_READ_N = 0;
     _asm nop _endasm
-    *c = CY7C4XX_PORT;
-    CY7C4XX_READ_N = 1;
+    *c = FIFO_CY7C4XX_PORT;
+    FIFO_CY7C4XX_READ_N = 1;
 
     return 0;
 #else
@@ -260,22 +335,22 @@ static int cy7c4xxPull(unsigned char *c)
         unsigned char b7:1;
     } *__c;
 
-    if (CY7C4XX_EMPTY_N == 0)
+    if (FIFO_CY7C4XX_EMPTY_N == 0)
         return -1;
 
     __c = (struct cy7c4xx_port *)c;
 
-    CY7C4XX_READ_N = 0;
+    FIFO_CY7C4XX_READ_N = 0;
     _asm nop _endasm
-    __c->b0 = CY7C4XX_PORT_B0;
-    __c->b1 = CY7C4XX_PORT_B1;
-    __c->b2 = CY7C4XX_PORT_B2;
-    __c->b3 = CY7C4XX_PORT_B3;
-    __c->b4 = CY7C4XX_PORT_B4;
-    __c->b5 = CY7C4XX_PORT_B5;
-    __c->b6 = CY7C4XX_PORT_B6;
-    __c->b7 = CY7C4XX_PORT_B7;
-    CY7C4XX_READ_N = 1;
+    __c->b0 = FIFO_CY7C4XX_PORT_B0;
+    __c->b1 = FIFO_CY7C4XX_PORT_B1;
+    __c->b2 = FIFO_CY7C4XX_PORT_B2;
+    __c->b3 = FIFO_CY7C4XX_PORT_B3;
+    __c->b4 = FIFO_CY7C4XX_PORT_B4;
+    __c->b5 = FIFO_CY7C4XX_PORT_B5;
+    __c->b6 = FIFO_CY7C4XX_PORT_B6;
+    __c->b7 = FIFO_CY7C4XX_PORT_B7;
+    FIFO_CY7C4XX_READ_N = 1;
 
     return 0;
 #endif
@@ -301,18 +376,29 @@ static void processCy7c4xxFifo(void)
                 unsigned char b[12];
                 putrsUSART("FIFO IN: '");
                 for (i=0;i<l;++i) {
-                    while (BusyUSART());
-                    putcUSART(InDataPacket[i]);
+                    if (i != 0) {
+                        while (BusyUSART());
+                        putcUSART(' ');
+                    }
+                    sprintf(b, "%02x", InDataPacket[i]);
+                    putsUSART(b);
                 }
-
                 sprintf(b, "' len=%3d\r\n", l);
                 putsUSART(b);
             }
 
+            if (usbfifo_debug_operation.fifo_loopback == 1) {
+                unsigned char l = cy7c4xx_buf_ptr-InDataPacket, i; /* length of incoming packet _must_ not exceed the length of outgoing */
+                fifo9403aPush(l, 1);
+                for (i=0;i<l;++i)
+                    fifo9403aPush(InDataPacket[i], 1);
+            }
+
             /* FIXME: use real ping-pong */
-            while (USBHandleBusy(UsbInDataHandle));
+            while (USBHandleBusy(UsbInDataHandle)); // should not loop, anyway ...
             UsbInDataHandle = USBGenWrite(USBGEN_DATA_EP_NUM, (BYTE*)&InDataPacket, cy7c4xx_buf_ptr-InDataPacket);
-            while (USBHandleBusy(UsbInDataHandle));
+            while (USBHandleBusy(UsbInDataHandle)); // have to wait here as full ping-pong is not implemented
+                                                    // and thus we don't want data from FIFO override the data being sent here
 
             cy7c4xx_buf_ptr = InDataPacket;
         }
@@ -474,22 +560,26 @@ static void processUsbCommands(void)
             unsigned char i;
             putrsUSART("USB OUT: '");
             for (i=0;i<l;++i) {
-                while (BusyUSART());
-                putcUSART(OutCmdPacket[i]);
+                if (i != 0) {
+                    while (BusyUSART());
+                    putcUSART(' ');
+                }
+                sprintf(b, "%02x", OutCmdPacket[i]);
+                putsUSART(b);
             }
-            sprintf(b, "' len=%3d\r\n", USBHandleGetLength(UsbOutCmdHandle));
+            sprintf(b, "' len=%3d\r\n", l);
             putsUSART(b);
         }
 
         if (usbfifo_debug_operation.usb_loopback == 1) {
             unsigned char i;
-            for (i=0;i<l;++i)
-                InCmdPacket[i] = OutCmdPacket[i];
-
             // Now check to make sure no previous attempts to send data to the host are still pending.  If any attemps are still
             // pending, we do not want to write to the endpoint 1 IN buffer again, until the previous transaction is complete.
             // Otherwise the unsent data waiting in the buffer will get overwritten and will result in unexpected behavior.
             while (USBHandleBusy(UsbInCmdHandle));
+
+            for (i=0;i<l;++i)
+                InCmdPacket[i] = OutCmdPacket[i];
 
             // The endpoint was not "busy", therefore it is safe to write to the buffer and arm the endpoint.
             // The USBGenWrite() function call "arms" the endpoint (and makes the handle indicate the endpoint is busy).
@@ -529,12 +619,52 @@ static void processUsbCommands(void)
         // can read the data which will be sitting in the buffer.
         UsbOutCmdHandle = USBGenRead(USBGEN_CMD_EP_NUM, (BYTE*)&OutCmdPacket, USBGEN_EP_SIZE);
     }
+
+    if (!USBHandleBusy(UsbOutDataHandle)) {
+#if USBGEN_EP_SIZE > FIFO_9403A_MAX_MSG_LEN
+#error "Transfer of more than FIFO_9403A_MAX_MSG_LEN not implemented"
+#endif
+        unsigned char l = USBHandleGetLength(UsbOutDataHandle);
+        unsigned char i;
+
+        if (usbfifo_debug_operation.dump_usb_out == 1) {
+            unsigned char b[16];
+            putrsUSART("USB OUT: '");
+            for (i=0;i<l;++i) {
+                if (i != 0) {
+                    while (BusyUSART());
+                    putcUSART(' ');
+                }
+                sprintf(b, "%02x", OutDataPacket[i]);
+            }
+            sprintf(b, "' len=%3d\r\n", l);
+            putsUSART(b);
+        }
+
+        if (usbfifo_debug_operation.usb_loopback == 1) {
+            while (USBHandleBusy(UsbInDataHandle)); // ensure that FIFO data left the device
+
+            for (i=0;i<l;++i)
+                InDataPacket[i] = OutDataPacket[i];
+
+            /* FIXME: use real ping-pong */
+            UsbInDataHandle = USBGenWrite(USBGEN_DATA_EP_NUM, (BYTE*)&InDataPacket, l);
+            while (USBHandleBusy(UsbInDataHandle)); // have to wait here as full ping-pong is not implemented
+                                                    // and thus we don't want data from FIFO override the data being sent here
+        }
+
+        fifo9403aPush(l, 1);
+        for (i=0;i<l;++i)
+            fifo9403aPush(OutDataPacket[i], 1);
+
+        UsbOutDataHandle = USBGenRead(USBGEN_DATA_EP_NUM, (BYTE*)&OutDataPacket, USBGEN_EP_SIZE);
+    }
 }
 
 void main(void)
 {
     plaInit();
-    cy7c4xxInit();
+    fifosInit();
     uartInit();
     usbInit();
 

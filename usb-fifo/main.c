@@ -42,6 +42,7 @@
 #pragma config EBTR2    = OFF       // Block 2 (004000-005FFFh) is not protected from table reads executed in other blocks
 #pragma config EBTRB    = OFF       // Boot block (000000-0007FFh) is not protected from table reads executed in other block
 #pragma config DEBUG    = OFF       // Background debugger disabled, RB6 and RB7 configured as general purpose I/O pins
+#pragma config LVP      = OFF       // Single-Supply ICSP disabled
 #else
 #error Building for not-supported target
 #endif
@@ -205,14 +206,16 @@ static void plaInit(void)
 #define CY7C4XX_PORT_B2_DIR        TRISBbits.TRISB2
 #define CY7C4XX_PORT_B3            PORTBbits.RB3
 #define CY7C4XX_PORT_B3_DIR        TRISBbits.TRISB3
-#define CY7C4XX_PORT_B4            PORTAbits.RA5
-#define CY7C4XX_PORT_B4_DIR        TRISAbits.TRISA5
-#define CY7C4XX_PORT_B5            PORTCbits.RC0
-#define CY7C4XX_PORT_B5_DIR        TRISCbits.TRISC0
-#define CY7C4XX_PORT_B6            PORTCbits.RC1
-#define CY7C4XX_PORT_B6_DIR        TRISCbits.TRISC1
-#define CY7C4XX_PORT_B7            PORTCbits.RC2
-#define CY7C4XX_PORT_B7_DIR        TRISCbits.TRISC2
+#define CY7C4XX_PORT_B4            PORTBbits.RB4
+#define CY7C4XX_PORT_B4_DIR        TRISBbits.TRISB4
+#define CY7C4XX_PORT_B5            PORTBbits.RB5
+#define CY7C4XX_PORT_B5_DIR        TRISBbits.TRISB5
+#define CY7C4XX_PORT_B6            PORTBbits.RB6
+#define CY7C4XX_PORT_B6_DIR        TRISBbits.TRISB6
+#define CY7C4XX_PORT_B7            PORTBbits.RB7
+#define CY7C4XX_PORT_B7_DIR        TRISBbits.TRISB7
+
+#define CY7C4XX_PORT               PORTB
 
 static void cy7c4xxInit(void)
 {
@@ -235,6 +238,17 @@ static void cy7c4xxInit(void)
 
 static int cy7c4xxPull(unsigned char *c)
 {
+#if defined(CY7C4XX_PORT)
+    if (CY7C4XX_EMPTY_N == 0)
+        return -1;
+
+    CY7C4XX_READ_N = 0;
+    _asm nop _endasm
+    *c = CY7C4XX_PORT;
+    CY7C4XX_READ_N = 1;
+
+    return 0;
+#else
     struct cy7c4xx_port {
         unsigned char b0:1;
         unsigned char b1:1;
@@ -264,6 +278,7 @@ static int cy7c4xxPull(unsigned char *c)
     CY7C4XX_READ_N = 1;
 
     return 0;
+#endif
 }
 
 static void processCy7c4xxFifo(void)

@@ -95,7 +95,11 @@ enum usbfifo_cmds {
     USBFIFO_CMD_USB_LOOPBACK,
 };
 
+#if DEBUG == 2
+static struct usbfifo_debug_operation usbfifo_debug_operation = {1, 1, 1, 1, };
+#else
 static struct usbfifo_debug_operation usbfifo_debug_operation = {0, };
+#endif
 #endif
 
 /*-----------------------------------------------------------*/
@@ -168,7 +172,7 @@ void LowISR (void)
 void highPrioISR(void)
 {
 #if defined(USB_INTERRUPT)
-    if (PIR2bits.USBIF)
+    /* if (PIR2bits.USBIF) */
         USBDeviceTasks();
 #endif
 }	//This return will be a "retfie fast", since this is in a #pragma interrupt section
@@ -176,7 +180,7 @@ void highPrioISR(void)
 #pragma interruptlow lowPrioISR
 void lowPrioISR(void)
 {
-    if (PIR1bits.RCIF)
+    /* if (PIR1bits.RCIF) */
         uartRxHandler();
 }	//This return will be a "retfie", since this is in a #pragma interruptlow section
 
@@ -673,12 +677,14 @@ static void processUsbCommands(void)
 
 void main(void)
 {
-    plaInit();
-    fifosInit();
     uartInit();
+    putrsUSART("UART initialized\r\n");
+    plaInit();
+    putrsUSART("PLA initialized\r\n");
+    fifosInit();
+    putrsUSART("FIFOs initialized\r\n");
     usbInit();
-
-    putrsUSART("Peripherals initialized\r\n");
+    putrsUSART("USB initialized\r\n");
 
     for (;;) {
         processCy7c4xxFifo();

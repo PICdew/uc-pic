@@ -20,12 +20,12 @@
     //  for your application.
 
     //#define USE_SELF_POWER_SENSE_IO
-    #define tris_self_power     TRISCbits.TRISC2    // Input
-    #define self_power          1
+    //#define tris_self_power     TRISCbits.TRISC2    // Input
+    #define self_power          0
 
     //#define USE_USB_BUS_SENSE_IO
-    #define tris_usb_bus_sense  TRISCbits.TRISC2    // Input
-    #define USB_BUS_SENSE       1
+    //#define tris_usb_bus_sense  TRISCbits.TRISC2    // Input
+    //#define USB_BUS_SENSE       1
 
     /*******************************************************************/
     /*******************************************************************/

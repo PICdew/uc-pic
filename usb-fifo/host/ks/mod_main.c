@@ -22,6 +22,7 @@
 #include <linux/uaccess.h>
 #include <linux/usb.h>
 #include <linux/usb/ch9.h>
+#include <linux/workqueue.h>
 #include <asm/atomic.h>
 
 #define DEBUG 1
@@ -86,6 +87,10 @@ struct usbfifo {
     struct usbfifo_urb urb_data_in;
     struct usbfifo_urb urb_data_out;
 
+    struct work_struct urb_cmd_in_work;
+    struct work_struct urb_data_in_work;
+    struct work_struct urb_data_out_work;
+
     char *cmd_in_buffer;
     size_t cmd_in_buffer_data_size;
     struct mutex cmd_in_buffer_mutex;
@@ -94,7 +99,7 @@ struct usbfifo {
     atomic_t urb_data_out_in_progress; // FIXME: likely overkill to use atomic as cbuffer mutex is exploited
 };
 
-/* FIXME: may race in USB disconnect routine */
+/* FIXME: USB disconnect may race with file operations */
 
 struct usbfifo_devlist {
     struct list_head list;
@@ -110,7 +115,23 @@ static LIST_HEAD(usbfifo_devlist);
 #define circ_cnt(circ)          CIRC_CNT((circ)->head, (circ)->tail, CIRC_SIZE)
 #define circ_byte(circ, idx)    ((circ)->buf[(idx) & CIRC_MASK])
 
+static int cmd_rx_submit(struct usbfifo *usbfifo);
 static void cmd_rx_complete(struct urb *urb);
+
+static void usbfifo_urb_cmd_in_work(struct work_struct *work)
+{
+    struct usbfifo *usbfifo = container_of(work, struct usbfifo, urb_cmd_in_work);
+    struct urb *urb = usbfifo->urb_cmd_in.urb;
+
+    if (urb->status == 0) {
+        mutex_lock(&usbfifo->cmd_in_buffer_mutex);
+        memcpy(usbfifo->cmd_in_buffer, usbfifo->urb_cmd_in.buffer, urb->actual_length);
+        usbfifo->cmd_in_buffer_data_size = urb->actual_length;
+        mutex_unlock(&usbfifo->cmd_in_buffer_mutex);
+    }
+
+    cmd_rx_submit(usbfifo);
+}
 
 static int cmd_rx_submit(struct usbfifo *usbfifo)
 {
@@ -134,39 +155,16 @@ static void cmd_rx_complete(struct urb *urb)
 {
     struct usbfifo *usbfifo = (struct usbfifo *)urb->context;
 
-    if (urb->status == 0) {
-        mutex_lock(&usbfifo->cmd_in_buffer_mutex);
-        memcpy(usbfifo->cmd_in_buffer, usbfifo->urb_cmd_in.buffer, urb->actual_length);
-        usbfifo->cmd_in_buffer_data_size = urb->actual_length;
-        mutex_unlock(&usbfifo->cmd_in_buffer_mutex);
-    }
-
-    cmd_rx_submit(usbfifo);
+    schedule_work(&usbfifo->urb_cmd_in_work);
 }
 
+static int data_rx_submit(struct usbfifo *usbfifo);
 static void data_rx_complete(struct urb *urb);
 
-static int data_rx_submit(struct usbfifo *usbfifo)
+static void usbfifo_urb_data_in_work(struct work_struct *work)
 {
-    int res;
-
-    usb_fill_bulk_urb(usbfifo->urb_data_in.urb,
-            usbfifo->udev, usbfifo->data_ep.in_pipe,
-            usbfifo->urb_data_in.buffer, usbfifo->urb_data_in.buffer_max_size,
-            data_rx_complete, usbfifo);
-
-    res = usb_submit_urb(usbfifo->urb_data_in.urb, GFP_KERNEL);
-    if (res < 0) {
-        DBG(0, KERN_ERR, "unable to submit DATA IN URB\n");
-        return res;
-    }
-
-    return 0;
-}
-
-static void data_rx_complete(struct urb *urb)
-{
-    struct usbfifo *usbfifo = (struct usbfifo *)urb->context;
+    struct usbfifo *usbfifo = container_of(work, struct usbfifo, urb_data_in_work);
+    struct urb *urb = usbfifo->urb_data_in.urb;
 
     if (urb->status == 0) {
         struct circ_buf *cbuffer = usbfifo->cbuffer_data_in.cbuffer;
@@ -204,29 +202,38 @@ static void data_rx_complete(struct urb *urb)
     data_rx_submit(usbfifo);
 }
 
-static void data_tx_complete(struct urb *urb);
-
-static int data_tx_submit(struct usbfifo *usbfifo)
+static int data_rx_submit(struct usbfifo *usbfifo)
 {
     int res;
 
-    usb_fill_bulk_urb(usbfifo->urb_data_out.urb,
-            usbfifo->udev, usbfifo->data_ep.out_pipe,
-            usbfifo->urb_data_out.buffer, usbfifo->urb_data_out_buffer_sent,
-            data_tx_complete, usbfifo);
+    usb_fill_bulk_urb(usbfifo->urb_data_in.urb,
+            usbfifo->udev, usbfifo->data_ep.in_pipe,
+            usbfifo->urb_data_in.buffer, usbfifo->urb_data_in.buffer_max_size,
+            data_rx_complete, usbfifo);
 
-    res = usb_submit_urb(usbfifo->urb_data_out.urb, GFP_KERNEL);
+    res = usb_submit_urb(usbfifo->urb_data_in.urb, GFP_KERNEL);
     if (res < 0) {
-        DBG(0, KERN_ERR, "unable to submit DATA OUT URB\n");
+        DBG(0, KERN_ERR, "unable to submit DATA IN URB\n");
         return res;
     }
 
     return 0;
 }
 
-static void data_tx_complete(struct urb *urb)
+static void data_rx_complete(struct urb *urb)
 {
     struct usbfifo *usbfifo = (struct usbfifo *)urb->context;
+
+    schedule_work(&usbfifo->urb_data_in_work);
+}
+
+static int data_tx_submit(struct usbfifo *usbfifo);
+static void data_tx_complete(struct urb *urb);
+
+static void usbfifo_urb_data_out_work(struct work_struct *work)
+{
+    struct usbfifo *usbfifo = container_of(work, struct usbfifo, urb_data_out_work);
+    struct urb *urb = usbfifo->urb_data_out.urb;
 
     struct circ_buf *cbuffer = usbfifo->cbuffer_data_out.cbuffer;
     struct mutex *mutex = &usbfifo->cbuffer_data_out.mutex;
@@ -260,6 +267,31 @@ static void data_tx_complete(struct urb *urb)
     DBG(2, KERN_DEBUG, "head: %u tail: %u\n", cbuffer->head, cbuffer->tail);
 
     data_tx_submit(usbfifo);
+}
+
+static int data_tx_submit(struct usbfifo *usbfifo)
+{
+    int res;
+
+    usb_fill_bulk_urb(usbfifo->urb_data_out.urb,
+            usbfifo->udev, usbfifo->data_ep.out_pipe,
+            usbfifo->urb_data_out.buffer, usbfifo->urb_data_out_buffer_sent,
+            data_tx_complete, usbfifo);
+
+    res = usb_submit_urb(usbfifo->urb_data_out.urb, GFP_KERNEL);
+    if (res < 0) {
+        DBG(0, KERN_ERR, "unable to submit DATA OUT URB\n");
+        return res;
+    }
+
+    return 0;
+}
+
+static void data_tx_complete(struct urb *urb)
+{
+    struct usbfifo *usbfifo = (struct usbfifo *)urb->context;
+
+    schedule_work(&usbfifo->urb_data_out_work);
 }
 
 static struct usbfifo *usbfifo_find_by_dev(dev_t dev)
@@ -407,18 +439,22 @@ static ssize_t usbfifo_data_write(struct file *file, const char __user *buf,
         kbuf = kmalloc(count, GFP_KERNEL);
         if (!kbuf) {
             DBG(0, KERN_ERR, "unable to allocate %zu bytes\n", count);
+            mutex_unlock(mutex);
             return -ENOMEM;
         }
 
         if (copy_from_user(kbuf, buf, count) != 0) {
             DBG(0, KERN_ERR, "unable to copy from user\n");
+            mutex_unlock(mutex);
             res = -EIO;
             goto out_free_kbuf;
         }
 
         free = circ_free(cbuffer);
         if (!free) {
+            DBG(2, KERN_DEBUG, "circ buffer full\n");
             mutex_unlock(mutex);
+            res = stored;
             goto out_free_kbuf;
         }
         count = min(count, free);
@@ -434,13 +470,12 @@ static ssize_t usbfifo_data_write(struct file *file, const char __user *buf,
 
     mutex_unlock(mutex);
 
-    DBG(2, KERN_DEBUG, "written %zu bytes\n", count);
+    DBG(2, KERN_DEBUG, "written %zu bytes\n", stored);
 
     res = stored;
 
   out_free_kbuf:
-    if (kbuf)
-        kfree(kbuf);
+    kfree(kbuf);
 
 	return res;
 }
@@ -820,6 +855,10 @@ static int usbfifo_probe(struct usb_interface *intf, const struct usb_device_id 
     }
     mutex_init(&usbfifo->cmd_in_buffer_mutex);
 
+    INIT_WORK(&usbfifo->urb_cmd_in_work, usbfifo_urb_cmd_in_work);
+    INIT_WORK(&usbfifo->urb_data_in_work, usbfifo_urb_data_in_work);
+    INIT_WORK(&usbfifo->urb_data_out_work, usbfifo_urb_data_out_work);
+
     res = data_rx_submit(usbfifo);
     if (res < 0)
         goto out_free_cmd_buffer_in;
@@ -884,6 +923,12 @@ void usbfifo_disconnect(struct usb_interface *intf)
         usb_kill_urb(usbfifo->urb_data_out.urb);
         usb_kill_urb(usbfifo->urb_data_in.urb);
         usb_kill_urb(usbfifo->urb_cmd_in.urb);
+
+        cancel_work_sync(&usbfifo->urb_cmd_in_work);
+        cancel_work_sync(&usbfifo->urb_data_in_work);
+        cancel_work_sync(&usbfifo->urb_data_out_work);
+
+        flush_scheduled_work();
 
         usbfifo_free_urb_and_buffer(&usbfifo->urb_data_out);
         usbfifo_free_urb_and_buffer(&usbfifo->urb_data_in);
